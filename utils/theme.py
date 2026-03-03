@@ -189,6 +189,15 @@ hr {
 ::-webkit-scrollbar-track {
     background: transparent;
 }
+
+/* Rename "app" label in sidebar navigation to "Performance Command Center" */
+[data-testid="stSidebarNav"] li:first-child span {
+    font-size: 0;
+}
+[data-testid="stSidebarNav"] li:first-child span::after {
+    content: "Performance Command Center";
+    font-size: 0.875rem;
+}
 </style>""")
 
 

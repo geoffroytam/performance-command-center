@@ -193,7 +193,7 @@ kpi_cards = [
     ("Revenue", "revenue", False),
     ("Orders", "orders", False),
     ("AOV", "aov", False),
-    ("CPA", "cpa", True),
+    ("CPM", "cpm", True),
 ]
 
 cols = st.columns(len(kpi_cards))
@@ -479,10 +479,109 @@ if drivers:
     for part in narrative_parts:
         st.markdown(part)
 
+    # ── Senior analyst paragraph ──────────────────────────────────
+    st.markdown("")
+    st.markdown("**Analyst Interpretation:**")
+
+    # Build a professional narrative paragraph
+    period_label = f"{start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}"
+    comp_label = f"{comp_start.strftime('%d/%m/%Y')} – {comp_end.strftime('%d/%m/%Y')}"
+
+    para_parts = []
+
+    # Opening context
+    roas_status = "above" if curr["roas"] >= target else "below"
+    para_parts.append(
+        f"During the period {period_label}, {selected_platform} {selected_type} delivered a ROAS of "
+        f"{curr['roas']:.1f}, which is {roas_status} the target of {target}. "
+        f"Compared to the reference period ({comp_label}), ROAS moved {roas_delta:+.1f}%."
+    )
+
+    # Funnel narrative following the KPI tree
+    neg_drivers = [d for d in drivers if d["impact"] == "negative"]
+    pos_drivers = [d for d in drivers if d["impact"] == "positive"]
+
+    if neg_drivers and not pos_drivers:
+        kpis = ", ".join([d["kpi"] for d in neg_drivers])
+        para_parts.append(
+            f"The performance deterioration is driven by {kpis}. "
+            f"This points to a structural challenge in the funnel that needs to be addressed before scaling."
+        )
+    elif pos_drivers and not neg_drivers:
+        kpis = ", ".join([d["kpi"] for d in pos_drivers])
+        para_parts.append(
+            f"The improvement is driven by {kpis}, indicating healthy funnel dynamics. "
+            f"This creates an opportunity for controlled scaling if the trend is sustained."
+        )
+    elif neg_drivers and pos_drivers:
+        neg_kpis = ", ".join([d["kpi"] for d in neg_drivers])
+        pos_kpis = ", ".join([d["kpi"] for d in pos_drivers])
+        para_parts.append(
+            f"The picture is mixed: {pos_kpis} improved, but {neg_kpis} deteriorated. "
+            f"The net effect on ROAS depends on which side dominates."
+        )
+
+    # Specific funnel stories
+    if not pd.isna(cpm_delta) and cpm_delta > 15:
+        para_parts.append(
+            f"The significant CPM increase (+{cpm_delta:.1f}%) suggests growing auction pressure. "
+            f"This could be driven by increased competition, seasonal demand, or audience overlap across ad sets."
+        )
+    if not pd.isna(ctr_delta) and ctr_delta < -15:
+        para_parts.append(
+            f"CTR has declined substantially ({ctr_delta:.1f}%), which typically signals creative fatigue "
+            f"or a mismatch between the ad message and the target audience. "
+            f"Consider refreshing creative assets and reviewing frequency caps."
+        )
+    if not pd.isna(cvr_delta) and cvr_delta < -15:
+        para_parts.append(
+            f"The drop in conversion rate ({cvr_delta:.1f}%) is concerning as it directly impacts order volume. "
+            f"Common causes include landing page issues, offer relevance, or targeting audiences with lower purchase intent."
+        )
+    if not pd.isna(aov_delta) and abs(aov_delta) > 15:
+        direction = "increase" if aov_delta > 0 else "decrease"
+        para_parts.append(
+            f"AOV showed a notable {direction} ({aov_delta:+.1f}%). "
+            f"{'This may be driven by product mix changes, promotions, or one-off high-value orders that could revert.' if aov_delta > 0 else 'This could indicate a shift toward lower-priced products or increased discount dependency.'}"
+        )
+
+    # Closing recommendation
+    if not pd.isna(roas_delta) and roas_delta < -15:
+        para_parts.append(
+            "The recommendation is to hold current spend levels, isolate the underperforming segments, "
+            "and focus on fixing the weakest link in the funnel before attempting to scale."
+        )
+    elif not pd.isna(roas_delta) and roas_delta > 15:
+        if not pd.isna(orders_delta) and orders_delta > 10:
+            para_parts.append(
+                "With volume growth supporting the ROAS improvement, controlled scaling is advisable. "
+                "Increase daily budgets gradually (15-20% max) while monitoring the sub-metrics for any sign of regression."
+            )
+        else:
+            para_parts.append(
+                "While ROAS has improved, the lack of proportional volume growth warrants caution. "
+                "Monitor for 48-72 hours before scaling to confirm the trend is sustainable and not driven by outlier orders."
+            )
+    else:
+        para_parts.append(
+            "Performance is within normal operating range. Continue with the current strategy "
+            "and focus on incremental improvements to the weakest funnel metrics."
+        )
+
+    analyst_text = " ".join(para_parts)
+    st.markdown(
+        f'<div style="background:{COLORS["light_gray"]}; padding:16px; border-radius:8px; '
+        f'line-height:1.6; font-size:0.92rem; color:#403833;">'
+        f'{analyst_text}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
 else:
     st.markdown(
         "All sub-KPIs are within normal range (less than 10% change). "
-        "Performance is stable between the two periods."
+        "Performance is stable between the two periods. Continue monitoring and focus on incremental "
+        "improvements to conversion rate and creative performance."
     )
 
 
