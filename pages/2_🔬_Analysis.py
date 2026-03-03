@@ -1,31 +1,26 @@
-"""Deep Analysis — 4-question structured analysis method."""
+"""Deep Analysis — KPI tree decomposition with senior analyst narrative."""
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
 from datetime import datetime, timedelta
 
 from utils.data_loader import load_all_data
 from utils.calculations import (
     calculate_baselines,
-    aggregate_by_period,
-    compute_delta,
     format_currency,
-    format_pct,
     format_number,
-    format_delta,
     load_action_log,
     save_action_log,
 )
 from utils.anomaly_detection import diagnose
-from utils.constants import COLORS, PLATFORM_COLORS, PLATFORMS, ROAS_TARGETS, load_settings
+from utils.constants import COLORS, ROAS_TARGETS, load_settings
 from utils.theme import inject_objectif_lune_css, render_header
 
 st.set_page_config(page_title="Deep Analysis", page_icon="🚀", layout="wide")
 inject_objectif_lune_css()
 
-render_header("Deep Analysis", "The 4-question method for structured performance analysis")
+render_header("Deep Analysis", "KPI tree decomposition — understand what changed, why, and what to do")
 
 
 # ── Load Data ─────────────────────────────────────────────────
@@ -40,12 +35,10 @@ df = st.session_state.data
 settings = load_settings()
 
 # ── Filters ───────────────────────────────────────────────────
-st.subheader("Filters")
-
 max_date = df["date"].max().date()
 min_date = df["date"].min().date()
 
-col_plat, col_type, col_gran = st.columns(3)
+col_plat, col_type = st.columns(2)
 
 with col_plat:
     available_platforms = sorted(df["platform"].unique().tolist())
@@ -57,12 +50,8 @@ with col_type:
     )
     selected_type = st.selectbox("Campaign Type", available_types)
 
-with col_gran:
-    granularity = st.selectbox("Granularity", ["Daily", "Weekly", "Monthly"])
-
 # ── Date Range Selection ──────────────────────────────────────
-st.markdown("**Date Ranges**")
-st.caption("Select any two periods to compare — e.g., Jan 2026 vs Jan 2025, or Feb 2026 vs Jun 2025")
+st.caption("Select two periods to compare — e.g., this month vs last month, or vs same period last year")
 
 col_current, col_compare = st.columns(2)
 
@@ -83,11 +72,9 @@ with col_current:
 
 with col_compare:
     st.markdown("**Comparison Period**")
-    # Default: same length period immediately before current period
     current_length_days = (pd.Timestamp(end_date) - pd.Timestamp(start_date)).days
     default_comp_end = start_date - timedelta(days=1)
     default_comp_start = default_comp_end - timedelta(days=current_length_days)
-    # Ensure defaults are within data range
     default_comp_start = max(default_comp_start, min_date)
     default_comp_end = max(default_comp_end, min_date)
 
@@ -104,286 +91,486 @@ with col_compare:
     else:
         comp_start = comp_end = compare_range
 
-# Show period summary
 curr_days = (pd.Timestamp(end_date) - pd.Timestamp(start_date)).days + 1
 comp_days = (pd.Timestamp(comp_end) - pd.Timestamp(comp_start)).days + 1
-period_info = f"**Current:** {start_date.strftime('%d/%m/%Y')} → {end_date.strftime('%d/%m/%Y')} ({curr_days} days) &nbsp;&nbsp;|&nbsp;&nbsp; **Comparison:** {comp_start.strftime('%d/%m/%Y')} → {comp_end.strftime('%d/%m/%Y')} ({comp_days} days)"
-st.caption(period_info)
+st.caption(
+    f"**Current:** {start_date.strftime('%d/%m/%Y')} to {end_date.strftime('%d/%m/%Y')} ({curr_days}d) "
+    f"| **Comparison:** {comp_start.strftime('%d/%m/%Y')} to {comp_end.strftime('%d/%m/%Y')} ({comp_days}d)"
+)
 
-# Filter data
-mask = (
+# ── Filter data ───────────────────────────────────────────────
+mask_curr = (
     (df["date"] >= pd.Timestamp(start_date))
     & (df["date"] <= pd.Timestamp(end_date))
     & (df["platform"] == selected_platform)
     & (df["campaign_type"] == selected_type)
 )
-filtered = df[mask].copy()
+filtered = df[mask_curr].copy()
 
 if filtered.empty:
     st.warning("No data for the selected filters.")
     st.stop()
 
-# Aggregate
-period_map = {"Daily": "daily", "Weekly": "weekly", "Monthly": "monthly"}
-agg = aggregate_by_period(filtered, period_map[granularity], group_cols=["platform", "campaign_type"])
-
-# ── Compute baseline & comparison period ──────────────────────
-end_ts = pd.Timestamp(end_date)
-baseline = calculate_baselines(df, end_ts, platform=selected_platform, campaign_type=selected_type)
-
-# Use the user-selected comparison period
-prev_start = pd.Timestamp(comp_start)
-prev_end = pd.Timestamp(comp_end)
-
-prev_mask = (
-    (df["date"] >= prev_start)
-    & (df["date"] <= prev_end)
+mask_comp = (
+    (df["date"] >= pd.Timestamp(comp_start))
+    & (df["date"] <= pd.Timestamp(comp_end))
     & (df["platform"] == selected_platform)
     & (df["campaign_type"] == selected_type)
 )
-prev_filtered = df[prev_mask]
+comp_filtered = df[mask_comp].copy()
 
-# Current period totals
-curr_spend = filtered["spend"].sum()
-curr_revenue = filtered["revenue"].sum()
-curr_orders = filtered["conversions"].sum()
-curr_roas = curr_revenue / curr_spend if curr_spend > 0 else np.nan
+# ── Compute period KPIs ──────────────────────────────────────
+def compute_period_kpis(data: pd.DataFrame) -> dict:
+    """Compute all KPIs from aggregated raw values for a period."""
+    spend = data["spend"].sum()
+    revenue = data["revenue"].sum()
+    impressions = data["impressions"].sum()
+    clicks = data["clicks"].sum()
+    orders = data["conversions"].sum()
+    return {
+        "spend": spend,
+        "revenue": revenue,
+        "impressions": impressions,
+        "clicks": clicks,
+        "orders": orders,
+        "roas": revenue / spend if spend > 0 else np.nan,
+        "cpm": spend / impressions * 1000 if impressions > 0 else np.nan,
+        "ctr": clicks / impressions * 100 if impressions > 0 else np.nan,
+        "cvr": orders / clicks * 100 if clicks > 0 else np.nan,
+        "aov": revenue / orders if orders > 0 else np.nan,
+        "cpa": spend / orders if orders > 0 else np.nan,
+    }
 
-prev_spend = prev_filtered["spend"].sum() if not prev_filtered.empty else np.nan
-prev_revenue = prev_filtered["revenue"].sum() if not prev_filtered.empty else np.nan
-prev_roas = prev_revenue / prev_spend if (not pd.isna(prev_spend) and prev_spend > 0) else np.nan
 
-_, roas_pct = compute_delta(curr_roas, prev_roas)
-direction = "up" if (not pd.isna(roas_pct) and roas_pct > 0) else "down"
+curr = compute_period_kpis(filtered)
+comp = compute_period_kpis(comp_filtered) if not comp_filtered.empty else None
 
-# ── QUESTION 1: What Happened? ────────────────────────────────
+
+def pct_change(current_val, comparison_val):
+    """Compute % change between two values."""
+    if pd.isna(current_val) or pd.isna(comparison_val) or comparison_val == 0:
+        return np.nan
+    return (current_val - comparison_val) / comparison_val * 100
+
+
+def delta_arrow(pct, invert=False):
+    """Return colored arrow text for a delta. invert=True means lower is better (e.g., CPM, CPA)."""
+    if pd.isna(pct):
+        return "—"
+    is_good = pct < 0 if invert else pct > 0
+    color = COLORS["green"] if is_good else COLORS["red"]
+    arrow = "+" if pct > 0 else ""
+    return f'<span style="color:{color}; font-weight:600;">{arrow}{pct:.1f}%</span>'
+
+
+def format_kpi_value(kpi_name, value):
+    """Format a KPI value appropriately based on its type."""
+    if pd.isna(value):
+        return "—"
+    if kpi_name in ("spend", "revenue", "cpm", "aov", "cpa"):
+        return format_currency(value)
+    if kpi_name in ("ctr", "cvr"):
+        return f"{value:.2f}%"
+    if kpi_name == "roas":
+        return f"{value:.1f}"
+    if kpi_name in ("orders", "impressions", "clicks"):
+        return f"{value:,.0f}"
+    return f"{value:.2f}"
+
+
+# ═══════════════════════════════════════════════════════════════
+# SECTION 1: EXECUTIVE SUMMARY — What Happened?
+# ═══════════════════════════════════════════════════════════════
 st.markdown("---")
-st.subheader("Question 1: What Happened?")
+st.subheader("1. Executive Summary")
 
-if not pd.isna(roas_pct):
-    summary = (
-        f"**{selected_platform} {selected_type}** ROAS was **{curr_roas:.1f}** "
-        f"({start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}), "
-        f"**{direction} {abs(roas_pct):.1%}** vs comparison period "
-        f"({comp_start.strftime('%d/%m/%Y')} – {comp_end.strftime('%d/%m/%Y')}, ROAS {format_number(prev_roas, 1)})."
-    )
-else:
-    summary = (
-        f"**{selected_platform} {selected_type}** ROAS was **{curr_roas:.1f}** "
-        f"({start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}). "
-        f"No data in comparison period for comparison."
-    )
-st.markdown(summary)
+target = ROAS_TARGETS.get(selected_type, 8)
 
-# ROAS over time with baseline overlay
-if not agg.empty and "period" in agg.columns:
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=agg["period"],
-            y=agg["roas"],
-            mode="lines+markers",
-            name="ROAS",
-            line=dict(color=PLATFORM_COLORS.get(selected_platform, COLORS["blue"]), width=2),
-            marker=dict(size=6),
-        )
-    )
-    # Baseline overlay
-    base_roas = baseline.get("roas_14d", np.nan)
-    if not pd.isna(base_roas):
-        fig.add_hline(
-            y=base_roas,
-            line_dash="dash",
-            line_color=COLORS["gray"],
-            annotation_text=f"14d Baseline: {base_roas:.1f}",
-        )
-    # Target line
-    target = ROAS_TARGETS.get(selected_type, 8)
-    fig.add_hline(
-        y=target,
-        line_dash="dot",
-        line_color=COLORS["orange"],
-        annotation_text=f"Target: {target}",
-    )
+# Top-level KPI cards
+kpi_cards = [
+    ("ROAS", "roas", False),
+    ("Spend", "spend", True),
+    ("Revenue", "revenue", False),
+    ("Orders", "orders", False),
+    ("AOV", "aov", False),
+    ("CPA", "cpa", True),
+]
 
-    fig.update_layout(
-        title=f"ROAS Trend — {selected_platform} {selected_type}",
-        yaxis_title="ROAS",
-        xaxis_title="",
-        height=350,
-        plot_bgcolor=COLORS["white"],
-        margin=dict(t=50, b=20),
-    )
-    fig.update_xaxes(showgrid=True, gridcolor="#E8E4DB")
-    fig.update_yaxes(showgrid=True, gridcolor="#E8E4DB")
-    st.plotly_chart(fig, use_container_width=True)
-
-# ── QUESTION 2: What Drove the Change? ───────────────────────
-st.markdown("---")
-st.subheader("Question 2: What Drove the Change?")
-
-st.markdown("**Sub-KPI Waterfall: Current Period vs Rolling Baseline**")
-st.caption("Baselines use the 14-day rolling average before your current period end date — independent of the comparison period above.")
-
-# Compute aggregate KPIs for current period
-curr_impressions = filtered["impressions"].sum()
-curr_clicks = filtered["clicks"].sum()
-curr_cpm = curr_spend / curr_impressions * 1000 if curr_impressions > 0 else np.nan
-curr_ctr = curr_clicks / curr_impressions * 100 if curr_impressions > 0 else np.nan
-curr_cvr = curr_orders / curr_clicks * 100 if curr_clicks > 0 else np.nan
-curr_aov = curr_revenue / curr_orders if curr_orders > 0 else np.nan
-
-kpi_names = ["CPM", "CTR", "CVR", "AOV"]
-current_vals = [curr_cpm, curr_ctr, curr_cvr, curr_aov]
-baseline_vals = [baseline.get("cpm"), baseline.get("ctr"), baseline.get("cvr"), baseline.get("aov")]
-
-deltas_pct = []
-for c, b in zip(current_vals, baseline_vals):
-    if pd.isna(c) or pd.isna(b) or b == 0:
-        deltas_pct.append(0)
-    else:
-        deltas_pct.append((c - b) / b * 100)
-
-col_chart, col_table = st.columns([3, 2])
-
-with col_chart:
-    fig = go.Figure(
-        go.Bar(
-            x=kpi_names,
-            y=deltas_pct,
-            marker_color=[COLORS["green"] if d >= 0 else COLORS["red"] for d in deltas_pct],
-            text=[f"{d:+.1f}%" for d in deltas_pct],
-            textposition="outside",
-        )
-    )
-    fig.update_layout(
-        title="Sub-KPI Delta vs Baseline (%)",
-        yaxis_title="% Change",
-        height=300,
-        plot_bgcolor=COLORS["white"],
-        margin=dict(t=40, b=20),
-    )
-    fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(showgrid=True, gridcolor="#E8E4DB")
-    st.plotly_chart(fig, use_container_width=True)
-
-with col_table:
-    table_data = []
-    for name, curr, base, dpct in zip(kpi_names, current_vals, baseline_vals, deltas_pct):
-        abs_d = curr - base if (not pd.isna(curr) and not pd.isna(base)) else np.nan
-        table_data.append({
-            "KPI": name,
-            "Current": f"{curr:.2f}" if not pd.isna(curr) else "—",
-            "Baseline": f"{base:.2f}" if not pd.isna(base) else "—",
-            "Abs Delta": f"{abs_d:+.2f}" if not pd.isna(abs_d) else "—",
-            "% Delta": f"{dpct:+.1f}%",
-        })
-    st.dataframe(pd.DataFrame(table_data), use_container_width=True, hide_index=True)
-
-# ── QUESTION 3: Expected or Anomalous? ───────────────────────
-st.markdown("---")
-st.subheader("Question 3: Expected or Anomalous?")
-
-# Comparison period trend overlay
-comp_agg = aggregate_by_period(prev_filtered, period_map[granularity], group_cols=["platform", "campaign_type"]) if not prev_filtered.empty else pd.DataFrame()
-
-current_dates = []
-current_roas_series = []
-comp_dates = []
-comp_roas_series = []
-
-if not agg.empty:
-    for _, r in agg.iterrows():
-        current_dates.append(r["period"])
-        current_roas_series.append(r["roas"])
-
-if not comp_agg.empty:
-    for _, r in comp_agg.iterrows():
-        comp_dates.append(r["period"])
-        comp_roas_series.append(r["roas"])
-
-has_comparison = len(comp_roas_series) > 0 and any(not pd.isna(v) for v in comp_roas_series)
-
-if has_comparison:
-    fig = go.Figure()
-    # Current period
-    curr_labels = [d.strftime("%d/%m") if hasattr(d, "strftime") else str(d) for d in current_dates]
-    fig.add_trace(
-        go.Scatter(
-            x=list(range(len(current_dates))),
-            y=current_roas_series,
-            mode="lines+markers",
-            name=f"Current ({start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')})",
-            line=dict(color=COLORS["blue"], width=2),
-            text=curr_labels,
-            hovertemplate="%{text}: ROAS %{y:.1f}<extra></extra>",
-        )
-    )
-    # Comparison period
-    comp_labels = [d.strftime("%d/%m") if hasattr(d, "strftime") else str(d) for d in comp_dates]
-    fig.add_trace(
-        go.Scatter(
-            x=list(range(len(comp_dates))),
-            y=comp_roas_series,
-            mode="lines+markers",
-            name=f"Comparison ({comp_start.strftime('%d/%m/%Y')} – {comp_end.strftime('%d/%m/%Y')})",
-            line=dict(color=COLORS["gray"], width=2, dash="dash"),
-            text=comp_labels,
-            hovertemplate="%{text}: ROAS %{y:.1f}<extra></extra>",
-        )
-    )
-    tick_labels = curr_labels
-    fig.update_layout(
-        title=f"ROAS: Current vs Comparison Period",
-        xaxis=dict(tickvals=list(range(len(tick_labels))), ticktext=tick_labels),
-        yaxis_title="ROAS",
-        height=350,
-        plot_bgcolor=COLORS["white"],
-        margin=dict(t=50, b=20),
-    )
-    fig.update_yaxes(showgrid=True, gridcolor="#E8E4DB")
-    st.plotly_chart(fig, use_container_width=True)
-
-    # Summary text
-    avg_comp = np.nanmean(comp_roas_series)
-    avg_current = np.nanmean(current_roas_series)
-    if not pd.isna(avg_comp) and avg_comp > 0:
-        period_diff = (avg_current - avg_comp) / avg_comp
-        match_text = "matches" if abs(period_diff) < 0.15 else "does not match"
+cols = st.columns(len(kpi_cards))
+for idx, (label, key, invert) in enumerate(kpi_cards):
+    with cols[idx]:
+        curr_val = curr[key]
+        delta = pct_change(curr_val, comp[key]) if comp else np.nan
+        formatted = format_kpi_value(key, curr_val)
+        arrow_html = delta_arrow(delta, invert=invert)
+        # Show target comparison for ROAS card
+        target_line = ""
+        if key == "roas" and not pd.isna(curr_val):
+            t_color = COLORS["green"] if curr_val >= target else COLORS["red"]
+            t_label = "above" if curr_val >= target else "below"
+            target_line = f'<div style="font-size:0.75rem; color:{t_color};">{t_label} target {target}</div>'
         st.markdown(
-            f"During the comparison period ({comp_start.strftime('%d/%m/%Y')} – {comp_end.strftime('%d/%m/%Y')}), "
-            f"average ROAS was **{avg_comp:.1f}** ({period_diff:+.1%} vs current **{avg_current:.1f}**). "
-            f"This **{match_text}** the current trend."
+            f'<div style="background:{COLORS["light_gray"]}; padding:12px 16px; border-radius:8px; text-align:center;">'
+            f'<div style="font-size:0.8rem; color:{COLORS["gray"]};">{label}</div>'
+            f'<div style="font-size:1.3rem; font-weight:700; color:#2D3E50;">{formatted}</div>'
+            f'{target_line}'
+            f'<div style="font-size:0.85rem;">{arrow_html} vs comparison</div>'
+            f'</div>',
+            unsafe_allow_html=True,
         )
-else:
-    st.info("No data in the comparison period. Adjust the comparison dates in the filters above.")
 
-# ── QUESTION 4: What Should We Do? ───────────────────────────
+
+# ═══════════════════════════════════════════════════════════════
+# SECTION 2: KPI TREE DECOMPOSITION — Why Did It Change?
+# Following: ROAS = Revenue / Cost
+#   Revenue = Orders × AOV
+#     Orders = Clicks × CVR
+#       Clicks = Impressions × CTR
+#         Impressions = Reach × Frequency (not available, so Spend / CPM × 1000)
+#   Cost = Impressions × CPM / 1000
+# ═══════════════════════════════════════════════════════════════
 st.markdown("---")
-st.subheader("Question 4: What Should We Do?")
+st.subheader("2. KPI Tree Decomposition — Why Did ROAS Change?")
 
-# Auto-suggestion
+if comp is None:
+    st.info("No comparison period data. Select a comparison period to see the decomposition.")
+    st.stop()
+
+st.caption(
+    "Following the performance marketing KPI tree: ROAS is driven by Cost and Revenue. "
+    "Each sub-metric is decomposed to identify the root cause."
+)
+
+# ── Level 0: ROAS ────────────────────────────────────────────
+roas_delta = pct_change(curr["roas"], comp["roas"])
+spend_delta = pct_change(curr["spend"], comp["spend"])
+revenue_delta = pct_change(curr["revenue"], comp["revenue"])
+
+st.markdown(
+    f'#### ROAS: {format_kpi_value("roas", curr["roas"])} '
+    f'({delta_arrow(roas_delta)} vs comparison {format_kpi_value("roas", comp["roas"])})',
+    unsafe_allow_html=True,
+)
+
+# Determine primary driver at ROAS level
+roas_narrative = ""
+if not pd.isna(roas_delta):
+    direction = "improved" if roas_delta > 0 else "declined"
+    if abs(roas_delta) < 5:
+        roas_narrative = f"ROAS is **stable** ({roas_delta:+.1f}%). No significant change between periods."
+    else:
+        # Check what drove it
+        cost_impact = ""
+        rev_impact = ""
+        if not pd.isna(spend_delta):
+            if abs(spend_delta) > 5:
+                cost_impact = f"costs {'increased' if spend_delta > 0 else 'decreased'} by {abs(spend_delta):.1f}%"
+        if not pd.isna(revenue_delta):
+            if abs(revenue_delta) > 5:
+                rev_impact = f"revenue {'increased' if revenue_delta > 0 else 'decreased'} by {abs(revenue_delta):.1f}%"
+
+        if cost_impact and rev_impact:
+            roas_narrative = f"ROAS **{direction} {abs(roas_delta):.1f}%** because {rev_impact} while {cost_impact}."
+        elif rev_impact:
+            roas_narrative = f"ROAS **{direction} {abs(roas_delta):.1f}%** primarily because {rev_impact} (costs were stable)."
+        elif cost_impact:
+            roas_narrative = f"ROAS **{direction} {abs(roas_delta):.1f}%** primarily because {cost_impact} (revenue was stable)."
+        else:
+            roas_narrative = f"ROAS **{direction} {abs(roas_delta):.1f}%**."
+
+st.markdown(roas_narrative)
+
+# ── Level 1: Cost side vs Revenue side ────────────────────────
+col_cost, col_rev = st.columns(2)
+
+with col_cost:
+    st.markdown(
+        f'<div style="background:#FDF6F0; padding:16px; border-radius:8px; border-left:4px solid {COLORS["orange"]};">'
+        f'<div style="font-weight:700; font-size:1.1rem; margin-bottom:8px;">Cost Side</div>'
+        f'<table style="width:100%; font-size:0.9rem;">'
+        f'<tr><td><b>Total Spend</b></td><td style="text-align:right;">{format_kpi_value("spend", curr["spend"])}</td>'
+        f'<td style="text-align:right;">{delta_arrow(spend_delta, invert=True)}</td></tr>'
+        f'<tr><td>CPM</td><td style="text-align:right;">{format_kpi_value("cpm", curr["cpm"])}</td>'
+        f'<td style="text-align:right;">{delta_arrow(pct_change(curr["cpm"], comp["cpm"]), invert=True)}</td></tr>'
+        f'<tr><td>Impressions</td><td style="text-align:right;">{format_kpi_value("impressions", curr["impressions"])}</td>'
+        f'<td style="text-align:right;">{delta_arrow(pct_change(curr["impressions"], comp["impressions"]))}</td></tr>'
+        f'</table></div>',
+        unsafe_allow_html=True,
+    )
+
+with col_rev:
+    st.markdown(
+        f'<div style="background:#F0F5F1; padding:16px; border-radius:8px; border-left:4px solid {COLORS["green"]};">'
+        f'<div style="font-weight:700; font-size:1.1rem; margin-bottom:8px;">Revenue Side</div>'
+        f'<table style="width:100%; font-size:0.9rem;">'
+        f'<tr><td><b>Total Revenue</b></td><td style="text-align:right;">{format_kpi_value("revenue", curr["revenue"])}</td>'
+        f'<td style="text-align:right;">{delta_arrow(revenue_delta)}</td></tr>'
+        f'<tr><td>Orders</td><td style="text-align:right;">{format_kpi_value("orders", curr["orders"])}</td>'
+        f'<td style="text-align:right;">{delta_arrow(pct_change(curr["orders"], comp["orders"]))}</td></tr>'
+        f'<tr><td>AOV</td><td style="text-align:right;">{format_kpi_value("aov", curr["aov"])}</td>'
+        f'<td style="text-align:right;">{delta_arrow(pct_change(curr["aov"], comp["aov"]))}</td></tr>'
+        f'</table></div>',
+        unsafe_allow_html=True,
+    )
+
+# ── Level 2: Deeper decomposition ────────────────────────────
+st.markdown("")
+st.markdown("##### Funnel Decomposition")
+
+# Build the full decomposition table
+decomp_rows = [
+    ("**ROAS**", "roas", curr["roas"], comp["roas"], False, "Revenue / Spend"),
+    ("Spend", "spend", curr["spend"], comp["spend"], True, "Impressions x CPM / 1000"),
+    ("Revenue", "revenue", curr["revenue"], comp["revenue"], False, "Orders x AOV"),
+    ("CPM", "cpm", curr["cpm"], comp["cpm"], True, "Cost per 1,000 impressions"),
+    ("Impressions", "impressions", curr["impressions"], comp["impressions"], False, "Reach x Frequency"),
+    ("CTR (LPV)", "ctr", curr["ctr"], comp["ctr"], False, "Clicks / Impressions"),
+    ("Clicks (LPV)", "clicks", curr["clicks"], comp["clicks"], False, "Impressions x CTR"),
+    ("CVR (LPV)", "cvr", curr["cvr"], comp["cvr"], False, "Orders / Clicks"),
+    ("Orders", "orders", curr["orders"], comp["orders"], False, "Clicks x CVR"),
+    ("AOV", "aov", curr["aov"], comp["aov"], False, "Revenue / Orders"),
+    ("CPA", "cpa", curr["cpa"], comp["cpa"], True, "Spend / Orders"),
+]
+
+decomp_html = (
+    '<table style="width:100%; border-collapse:collapse; font-size:0.9rem;">'
+    '<tr style="border-bottom:2px solid #2D3E50;">'
+    '<th style="text-align:left; padding:8px;">KPI</th>'
+    '<th style="text-align:right; padding:8px;">Current</th>'
+    '<th style="text-align:right; padding:8px;">Comparison</th>'
+    '<th style="text-align:right; padding:8px;">Change</th>'
+    '<th style="text-align:left; padding:8px;">Formula</th>'
+    '</tr>'
+)
+
+for label, key, curr_val, comp_val, invert, formula in decomp_rows:
+    pct = pct_change(curr_val, comp_val)
+    arrow = delta_arrow(pct, invert=invert)
+    bg = ""
+    if not pd.isna(pct) and abs(pct) > 15:
+        bg = f' style="background:#FFF3F0;"' if (pct > 0 and invert) or (pct < 0 and not invert) else f' style="background:#F0F8F0;"'
+
+    decomp_html += (
+        f'<tr{bg}>'
+        f'<td style="padding:6px 8px;">{label}</td>'
+        f'<td style="text-align:right; padding:6px 8px;">{format_kpi_value(key, curr_val)}</td>'
+        f'<td style="text-align:right; padding:6px 8px;">{format_kpi_value(key, comp_val)}</td>'
+        f'<td style="text-align:right; padding:6px 8px;">{arrow}</td>'
+        f'<td style="padding:6px 8px; color:{COLORS["gray"]}; font-size:0.8rem;">{formula}</td>'
+        f'</tr>'
+    )
+
+decomp_html += '</table>'
+st.markdown(decomp_html, unsafe_allow_html=True)
+
+st.caption("Rows highlighted in red indicate a negative impact on performance. Green = positive impact.")
+
+
+# ═══════════════════════════════════════════════════════════════
+# SECTION 3: ANALYST NARRATIVE — Root Cause Analysis
+# ═══════════════════════════════════════════════════════════════
+st.markdown("---")
+st.subheader("3. Root Cause Analysis")
+
+# Build the waterfall narrative following the KPI tree
+cpm_delta = pct_change(curr["cpm"], comp["cpm"])
+ctr_delta = pct_change(curr["ctr"], comp["ctr"])
+cvr_delta = pct_change(curr["cvr"], comp["cvr"])
+aov_delta = pct_change(curr["aov"], comp["aov"])
+orders_delta = pct_change(curr["orders"], comp["orders"])
+impressions_delta = pct_change(curr["impressions"], comp["impressions"])
+clicks_delta = pct_change(curr["clicks"], comp["clicks"])
+
+# Identify the primary and secondary drivers
+drivers = []
+
+if not pd.isna(cpm_delta) and abs(cpm_delta) > 10:
+    impact = "negative" if cpm_delta > 0 else "positive"
+    drivers.append({
+        "kpi": "CPM",
+        "delta": cpm_delta,
+        "impact": impact,
+        "explanation": f"CPM {'increased' if cpm_delta > 0 else 'decreased'} by {abs(cpm_delta):.1f}% — "
+                       f"{'higher auction pressure means each impression costs more, reducing efficiency' if cpm_delta > 0 else 'lower auction costs mean more impressions per real spent, improving efficiency'}.",
+    })
+
+if not pd.isna(ctr_delta) and abs(ctr_delta) > 10:
+    impact = "positive" if ctr_delta > 0 else "negative"
+    drivers.append({
+        "kpi": "CTR",
+        "delta": ctr_delta,
+        "impact": impact,
+        "explanation": f"CTR {'improved' if ctr_delta > 0 else 'declined'} by {abs(ctr_delta):.1f}% — "
+                       f"{'creatives are generating more engagement per impression' if ctr_delta > 0 else 'creatives are less engaging, consider refreshing ads or checking frequency'}.",
+    })
+
+if not pd.isna(cvr_delta) and abs(cvr_delta) > 10:
+    impact = "positive" if cvr_delta > 0 else "negative"
+    drivers.append({
+        "kpi": "CVR",
+        "delta": cvr_delta,
+        "impact": impact,
+        "explanation": f"CVR {'improved' if cvr_delta > 0 else 'declined'} by {abs(cvr_delta):.1f}% — "
+                       f"{'more visitors are converting, indicating better audience quality or landing page performance' if cvr_delta > 0 else 'fewer visitors are converting, check landing page, offer relevance, or audience targeting'}.",
+    })
+
+if not pd.isna(aov_delta) and abs(aov_delta) > 10:
+    impact = "positive" if aov_delta > 0 else "negative"
+    drivers.append({
+        "kpi": "AOV",
+        "delta": aov_delta,
+        "impact": impact,
+        "explanation": f"AOV {'increased' if aov_delta > 0 else 'decreased'} by {abs(aov_delta):.1f}% — "
+                       f"{'customers are spending more per order (upsell/cross-sell working or product mix shift)' if aov_delta > 0 else 'customers are spending less per order (possible discount dependency or product mix shift)'}.",
+    })
+
+if drivers:
+    # Sort by absolute impact
+    drivers.sort(key=lambda d: abs(d["delta"]), reverse=True)
+
+    st.markdown("**Key Drivers Identified:**")
+    for i, d in enumerate(drivers, 1):
+        color = COLORS["green"] if d["impact"] == "positive" else COLORS["red"]
+        st.markdown(
+            f'<div style="background:{COLORS["light_gray"]}; padding:10px 14px; border-radius:6px; '
+            f'margin-bottom:8px; border-left:4px solid {color};">'
+            f'<b>{d["kpi"]}</b> ({d["delta"]:+.1f}% — {d["impact"]} impact)<br/>'
+            f'{d["explanation"]}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    # Build a summary narrative
+    st.markdown("")
+    st.markdown("**Summary:**")
+
+    narrative_parts = []
+
+    # Cost side story
+    cost_drivers = [d for d in drivers if d["kpi"] in ("CPM",)]
+    revenue_drivers = [d for d in drivers if d["kpi"] in ("CTR", "CVR", "AOV")]
+
+    if cost_drivers and revenue_drivers:
+        cost_story = " and ".join([f"{d['kpi']} {d['delta']:+.1f}%" for d in cost_drivers])
+        rev_story = " and ".join([f"{d['kpi']} {d['delta']:+.1f}%" for d in revenue_drivers])
+        narrative_parts.append(
+            f"On the **cost side**, {cost_story}. On the **revenue side**, {rev_story}."
+        )
+    elif cost_drivers:
+        cost_story = " and ".join([f"{d['kpi']} {d['delta']:+.1f}%" for d in cost_drivers])
+        narrative_parts.append(f"The change is primarily **cost-driven**: {cost_story}. Revenue-side metrics are stable.")
+    elif revenue_drivers:
+        rev_story = " and ".join([f"{d['kpi']} {d['delta']:+.1f}%" for d in revenue_drivers])
+        narrative_parts.append(f"The change is primarily **revenue-driven**: {rev_story}. Cost metrics are stable.")
+
+    # Check for problematic combinations
+    if not pd.isna(aov_delta) and aov_delta > 15 and not pd.isna(orders_delta) and orders_delta < 5:
+        narrative_parts.append(
+            f"**Warning:** AOV is up {aov_delta:.1f}% but orders only changed {orders_delta:+.1f}%. "
+            f"This could be a false positive — revenue growth is driven by ticket size, not volume."
+        )
+
+    if not pd.isna(cpm_delta) and cpm_delta > 15 and not pd.isna(ctr_delta) and ctr_delta < -10:
+        narrative_parts.append(
+            f"**Alert:** CPM up {cpm_delta:.1f}% combined with CTR down {abs(ctr_delta):.1f}% "
+            f"suggests creative fatigue or audience saturation."
+        )
+
+    for part in narrative_parts:
+        st.markdown(part)
+
+else:
+    st.markdown(
+        "All sub-KPIs are within normal range (less than 10% change). "
+        "Performance is stable between the two periods."
+    )
+
+
+# ═══════════════════════════════════════════════════════════════
+# SECTION 4: AUTO-DIAGNOSIS & RECOMMENDATION
+# ═══════════════════════════════════════════════════════════════
+st.markdown("---")
+st.subheader("4. Diagnosis & Recommendation")
+
+# Run the automated diagnosis engine
+end_ts = pd.Timestamp(end_date)
+baseline = calculate_baselines(df, end_ts, platform=selected_platform, campaign_type=selected_type)
+
 curr_row = {
-    "roas": curr_roas,
-    "cpm": curr_cpm,
-    "ctr": curr_ctr,
-    "cvr": curr_cvr,
-    "aov": curr_aov,
-    "conversions": curr_orders,
+    "roas": curr["roas"],
+    "cpm": curr["cpm"],
+    "ctr": curr["ctr"],
+    "cvr": curr["cvr"],
+    "aov": curr["aov"],
+    "conversions": curr["orders"],
 }
 diag_title, diag_suggestion = diagnose(curr_row, baseline)
 
-st.markdown(f"**Auto-Diagnosis:** {diag_title}")
-st.markdown(f"**Suggested Action:** {diag_suggestion}")
+# Determine color based on diagnosis
+diag_color = COLORS["green"]
+if "below" in diag_title.lower() or "issue" in diag_title.lower() or "fatigue" in diag_title.lower() or "pressure" in diag_title.lower():
+    diag_color = COLORS["red"]
+elif "false positive" in diag_title.lower():
+    diag_color = COLORS["orange"]
 
+st.markdown(
+    f'<div style="background:{COLORS["light_gray"]}; padding:16px; border-radius:8px; '
+    f'border-left:4px solid {diag_color};">'
+    f'<div style="font-weight:700; font-size:1.1rem; color:{diag_color};">{diag_title}</div>'
+    f'<div style="margin-top:8px;">{diag_suggestion}</div>'
+    f'</div>',
+    unsafe_allow_html=True,
+)
+
+# Build specific action recommendations based on the analysis
+st.markdown("")
+st.markdown("**Recommended Actions:**")
+
+recommendations = []
+
+if not pd.isna(roas_delta):
+    if roas_delta < -15:
+        # ROAS declined significantly
+        if not pd.isna(cpm_delta) and cpm_delta > 10:
+            recommendations.append("Audit ad placements and shift budget to lower-CPM ad sets or placements.")
+            recommendations.append("Review audience overlap — consolidate ad sets to reduce internal auction competition.")
+        if not pd.isna(ctr_delta) and ctr_delta < -10:
+            recommendations.append("Refresh creatives — test new formats (carousel, video, UGC).")
+            recommendations.append("Check ad frequency — pause ads with frequency above 3.")
+        if not pd.isna(cvr_delta) and cvr_delta < -10:
+            recommendations.append("Audit landing page performance (load time, mobile UX, offer clarity).")
+            recommendations.append("Check audience quality — review lookalike or interest targeting.")
+        if not pd.isna(aov_delta) and aov_delta < -10:
+            recommendations.append("Review product mix — check if lower-priced items are cannibalizing.")
+            recommendations.append("Consider upsell/cross-sell strategies or bundle offers.")
+        if not recommendations:
+            recommendations.append("Run a detailed sub-KPI waterfall to isolate the specific broken link in the funnel.")
+    elif roas_delta > 15:
+        # ROAS improved significantly
+        if not pd.isna(orders_delta) and orders_delta > 10 and (pd.isna(aov_delta) or abs(aov_delta) < 15):
+            recommendations.append("Scale gradually — increase daily budget by 15-20% max to avoid resetting learning.")
+            recommendations.append("Document the winning creative/audience combination for replication.")
+        elif not pd.isna(aov_delta) and aov_delta > 15 and (pd.isna(orders_delta) or orders_delta < 5):
+            recommendations.append("Hold spend flat — the improvement is driven by AOV, not volume. Wait 48-72h to confirm.")
+            recommendations.append("Monitor for one-off high-value orders skewing the data.")
+        else:
+            recommendations.append("Performance is improving. Document what changed and consider cautious scaling.")
+    else:
+        recommendations.append("Performance is stable. Maintain current strategy and monitor for emerging trends.")
+
+if recommendations:
+    for i, rec in enumerate(recommendations, 1):
+        st.markdown(f"{i}. {rec}")
+else:
+    st.markdown("Performance is within normal range. Continue monitoring.")
+
+# ── Action Log ─────────────────────────────────────────────────
 st.markdown("---")
-
-# User recommendation input
 with st.form("recommendation_form"):
     user_rec = st.text_area(
-        "Your recommendation",
+        "Your notes / recommendation",
         placeholder="Write your analysis conclusion and recommended action...",
-        height=100,
+        height=80,
     )
     save_btn = st.form_submit_button("Save to Action Log", type="primary")
     if save_btn and user_rec:
@@ -394,6 +581,9 @@ with st.form("recommendation_form"):
             "source": "deep_analysis",
             "platform": selected_platform,
             "campaign_type": selected_type,
+            "diagnosis": diag_title,
+            "roas_current": round(curr["roas"], 2) if not pd.isna(curr["roas"]) else None,
+            "roas_comparison": round(comp["roas"], 2) if comp and not pd.isna(comp["roas"]) else None,
             "timestamp": datetime.now().isoformat(),
         }
         log.append(entry)

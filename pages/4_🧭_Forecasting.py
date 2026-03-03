@@ -1,10 +1,10 @@
-"""Forecasting Engine — Bottom-up forecasting following the 6-step method."""
+"""Forecasting Engine — Monthly forecast with weekly steering breakdown."""
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-import json
+import calendar
 
 from utils.data_loader import load_all_data
 from utils.calculations import calculate_baselines, format_currency, format_number
@@ -12,7 +12,6 @@ from utils.forecasting import (
     get_last_month_actuals,
     compute_yoy_growth_ratio,
     project_revenue,
-    stress_test,
     load_forecast_log,
     save_forecast_log,
     compute_forecast_accuracy,
@@ -24,7 +23,7 @@ from utils.theme import inject_objectif_lune_css, render_header
 st.set_page_config(page_title="Forecasting", page_icon="🚀", layout="wide")
 inject_objectif_lune_css()
 
-render_header("Forecasting Engine", "Bottom-up forecasting with stress testing and pattern log cross-check")
+render_header("Forecasting Engine", "Monthly forecast with weekly steering and scenario planning")
 
 # ── Load Data ─────────────────────────────────────────────────
 if "data" not in st.session_state or st.session_state.data.empty:
@@ -45,7 +44,43 @@ target_month = st.date_input(
 target_month_str = target_month.strftime("%Y-%m")
 ref_date = pd.Timestamp(target_month)
 
-# ── Step 1: Total Cost Envelope ───────────────────────────────
+# Get number of days and weeks in target month
+year = target_month.year
+month = target_month.month
+days_in_month = calendar.monthrange(year, month)[1]
+month_start = pd.Timestamp(f"{year}-{month:02d}-01")
+month_end = pd.Timestamp(f"{year}-{month:02d}-{days_in_month}")
+
+# Build week boundaries for the target month
+week_boundaries = []
+current_day = month_start
+week_num = 1
+while current_day <= month_end:
+    # Each week is Mon-Sun, clipped to month boundaries
+    week_start = current_day
+    # Find the end of this week (Sunday) or end of month
+    days_to_sunday = (6 - current_day.weekday()) % 7
+    week_end = min(current_day + timedelta(days=days_to_sunday), month_end)
+    n_days = (week_end - week_start).days + 1
+    week_boundaries.append({
+        "week": f"W{week_num}",
+        "start": week_start,
+        "end": week_end,
+        "days": n_days,
+        "label": f"W{week_num} ({week_start.strftime('%d/%m')} – {week_end.strftime('%d/%m')})",
+    })
+    current_day = week_end + timedelta(days=1)
+    week_num += 1
+
+num_weeks = len(week_boundaries)
+st.caption(
+    f"Target: **{target_month.strftime('%B %Y')}** — {days_in_month} days, {num_weeks} weeks"
+)
+
+
+# ═══════════════════════════════════════════════════════════════
+# STEP 1: TOTAL COST ENVELOPE
+# ═══════════════════════════════════════════════════════════════
 st.markdown("---")
 st.subheader("Step 1: Total Cost Envelope")
 
@@ -75,7 +110,10 @@ with col4:
     forecasted_total = base * (1 + yoy_pct / 100) * (1 + manual_adj / 100)
     st.metric("Forecasted Total Spend", format_currency(forecasted_total))
 
-# ── Step 2: Platform Allocation ───────────────────────────────
+
+# ═══════════════════════════════════════════════════════════════
+# STEP 2: PLATFORM ALLOCATION
+# ═══════════════════════════════════════════════════════════════
 st.markdown("---")
 st.subheader("Step 2: Platform Allocation")
 st.caption("Adjust platform share — must sum to 100%")
@@ -112,7 +150,6 @@ if abs(total_alloc - 100) > 0.1:
 else:
     st.success("Allocations sum to 100%.")
 
-# Display table
 alloc_rows = []
 for p in available_platforms:
     alloc_rows.append({
@@ -123,7 +160,10 @@ for p in available_platforms:
     })
 st.dataframe(pd.DataFrame(alloc_rows), use_container_width=True, hide_index=True)
 
-# ── Step 3: Prospecting / Retargeting Split ───────────────────
+
+# ═══════════════════════════════════════════════════════════════
+# STEP 3: PROSPECTING / RETARGETING SPLIT
+# ═══════════════════════════════════════════════════════════════
 st.markdown("---")
 st.subheader("Step 3: Prospecting / Retargeting Split")
 
@@ -158,9 +198,12 @@ for platform in available_platforms:
         "retargeting_spend": platform_forecast_spend[platform] * (100 - prosp_pct) / 100,
     }
 
-# ── Step 4: Revenue Projection ───────────────────────────────
+
+# ═══════════════════════════════════════════════════════════════
+# STEP 4: MONTHLY REVENUE PROJECTION
+# ═══════════════════════════════════════════════════════════════
 st.markdown("---")
-st.subheader("Step 4: Revenue Projection")
+st.subheader("Step 4: Monthly Revenue Projection")
 st.caption("Using current baselines: 60-day AOV, 14-day CTR (LPV) / CVR (LPV) / CPM")
 
 projection_rows = []
@@ -182,6 +225,16 @@ for platform in available_platforms:
             baselines.get("aov", np.nan),
         )
 
+        target_roas = ROAS_TARGETS.get(ctype, 8)
+        roas_val = proj["roas"]
+        roas_status = ""
+        if roas_val >= target_roas:
+            roas_status = "above"
+        elif roas_val >= target_roas * 0.8:
+            roas_status = "near"
+        else:
+            roas_status = "below"
+
         projection_rows.append({
             "Platform": platform,
             "Type": ctype,
@@ -194,10 +247,11 @@ for platform in available_platforms:
             "Orders": format_number(proj["orders"], 0),
             "AOV": format_currency(baselines.get("aov", np.nan)),
             "Revenue": format_currency(proj["revenue"]),
-            "ROAS": format_number(proj["roas"], 1),
+            "ROAS": format_number(roas_val, 1),
             "_spend": spend,
             "_baselines": baselines,
             "_proj": proj,
+            "_roas_status": roas_status,
         })
 
 if projection_rows:
@@ -208,198 +262,321 @@ if projection_rows:
         hide_index=True,
     )
 
-    # ── Transparent Calculation Breakdown ─────────────────────
-    st.markdown("---")
-    st.markdown("#### 🔍 How These Numbers Are Calculated")
+    # Monthly totals summary
+    total_spend = sum(r["_spend"] for r in projection_rows)
+    total_revenue = sum(r["_proj"]["revenue"] for r in projection_rows)
+    total_orders = sum(r["_proj"]["orders"] for r in projection_rows)
+    total_roas = total_revenue / total_spend if total_spend > 0 else 0
+
+    st.markdown(
+        f'<div style="background:{COLORS["light_gray"]}; padding:14px; border-radius:8px; margin-top:8px;">'
+        f'<b>Monthly Totals:</b> Spend {format_currency(total_spend)} '
+        f'| Revenue {format_currency(total_revenue)} '
+        f'| Orders {format_number(total_orders, 0)} '
+        f'| Blended ROAS {total_roas:.1f}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Calculation breakdown (collapsible)
     cpm_days = settings.get("cpm_baseline_days", 14)
     aov_days = settings.get("aov_baseline_days", 60)
 
+    with st.expander("How These Numbers Are Calculated"):
+        st.markdown(
+f"""**Bottom-up funnel model:**
+
+```
+Spend / CPM x 1,000 = Impressions
+Impressions x CTR (LPV) = Landing Page Views
+LPV x CVR (LPV) = Orders
+Orders x AOV = Revenue
+Revenue / Spend = ROAS
+```
+
+**Baseline sources:** CPM/CTR/CVR use {cpm_days}-day rolling average. AOV uses {aov_days}-day rolling average.
+All baselines are weighted ratios computed from raw sums (not averaged daily ratios)."""
+        )
+
+        for row in projection_rows:
+            b = row["_baselines"]
+            p = row["_proj"]
+            s = row["_spend"]
+            with st.expander(f"{row['Platform']} — {row['Type']}"):
+                st.markdown(
+                    f"1. {format_currency(s)} / {format_currency(b.get('cpm', 0))} x 1,000 = **{p['impressions']:,.0f}** impressions\n"
+                    f"2. {p['impressions']:,.0f} x {b.get('ctr', 0):.2f}% = **{p['clicks']:,.0f}** clicks\n"
+                    f"3. {p['clicks']:,.0f} x {b.get('cvr', 0):.2f}% = **{p['orders']:,.0f}** orders\n"
+                    f"4. {p['orders']:,.0f} x {format_currency(b.get('aov', 0))} = **{format_currency(p['revenue'])}**\n"
+                    f"5. {format_currency(p['revenue'])} / {format_currency(s)} = **ROAS {p['roas']:.1f}**"
+                )
+
+
+# ═══════════════════════════════════════════════════════════════
+# STEP 5: WEEKLY STEERING PLAN
+# ═══════════════════════════════════════════════════════════════
+st.markdown("---")
+st.subheader("Step 5: Weekly Steering Plan")
+st.caption(
+    "Break the monthly forecast into weekly targets. Adjust weekly weights based on "
+    "seasonality, promotions, or historical patterns."
+)
+
+if projection_rows:
+    # Default: distribute proportionally by number of days in each week
+    default_week_pcts = [wb["days"] / days_in_month * 100 for wb in week_boundaries]
+
+    st.markdown("**Weekly spend distribution (%)**")
+    st.caption("Default is proportional to days. Adjust if you expect heavier spend in certain weeks (e.g., promotions).")
+
+    week_pcts = []
+    week_cols = st.columns(num_weeks)
+    for i, wb in enumerate(week_boundaries):
+        with week_cols[i]:
+            pct = st.number_input(
+                wb["label"],
+                min_value=0.0,
+                max_value=100.0,
+                value=round(default_week_pcts[i], 1),
+                step=1.0,
+                key=f"week_pct_{i}",
+            )
+            week_pcts.append(pct)
+
+    total_week_pct = sum(week_pcts)
+    if abs(total_week_pct - 100) > 0.5:
+        st.warning(f"Weekly weights sum to {total_week_pct:.1f}%. Should sum to 100%.")
+
+    # Build weekly steering table
+    weekly_steering = []
+    for i, wb in enumerate(week_boundaries):
+        w_factor = week_pcts[i] / 100 if total_week_pct > 0 else 1 / num_weeks
+        w_spend = total_spend * w_factor
+        w_revenue = total_revenue * w_factor
+        w_orders = total_orders * w_factor
+        w_roas = w_revenue / w_spend if w_spend > 0 else 0
+
+        weekly_steering.append({
+            "Week": wb["label"],
+            "Days": wb["days"],
+            "Weight": f"{week_pcts[i]:.1f}%",
+            "Spend Target": format_currency(w_spend),
+            "Daily Spend": format_currency(w_spend / wb["days"]) if wb["days"] > 0 else "—",
+            "Revenue Target": format_currency(w_revenue),
+            "Orders Target": format_number(w_orders, 0),
+            "ROAS Target": format_number(w_roas, 1),
+            "_spend": w_spend,
+            "_revenue": w_revenue,
+        })
+
+    st.dataframe(pd.DataFrame(weekly_steering)[[c for c in weekly_steering[0] if not c.startswith("_")]], use_container_width=True, hide_index=True)
+
+    # Weekly steering guidance
+    st.markdown("**Steering Rules:**")
     st.markdown(
-f"""The revenue projection follows a **bottom-up funnel model**. Each step feeds into the next,
-using your actual baseline metrics from the data. Here is the exact formula chain:
-
-```
-Spend ÷ CPM × 1,000 = Impressions
-Impressions × CTR (LPV) = Landing Page Views (Clicks)
-Landing Page Views × CVR (LPV) = Orders (Purchases)
-Orders × AOV = Revenue
-Revenue ÷ Spend = ROAS
-```
-
-**Baseline sources:**
-- **CPM** — {cpm_days}-day rolling average (weighted: total spend ÷ total impressions × 1000)
-- **CTR (LPV)** — {cpm_days}-day rolling average (weighted: total LPV ÷ total impressions × 100)
-- **CVR (LPV)** — {cpm_days}-day rolling average (weighted: total purchases ÷ total LPV × 100)
-- **AOV** — {aov_days}-day rolling average (weighted: total revenue ÷ total purchases)"""
+        f"- If weekly spend is **ahead of target by >10%**, reduce daily budgets to pace back\n"
+        f"- If weekly spend is **behind target by >10%**, evaluate whether to increase or let it ride\n"
+        f"- If ROAS drops below **{min(ROAS_TARGETS.values()) * 0.8:.0f}** mid-week, pause lowest-performing ad sets\n"
+        f"- Review performance every **Monday** and adjust budgets for the upcoming week"
     )
 
-    # Detailed step-by-step for each platform/type
+
+# ═══════════════════════════════════════════════════════════════
+# STEP 6: SCENARIO PLANNING (Conservative / Base / Optimistic)
+# ═══════════════════════════════════════════════════════════════
+st.markdown("---")
+st.subheader("Step 6: Scenario Planning")
+st.caption(
+    "Three scenarios to prepare for different market conditions. "
+    "Conservative = costs rise & conversion drops. Optimistic = costs drop & conversion improves."
+)
+
+if projection_rows:
+    col_con, col_base, col_opt = st.columns(3)
+
+    with col_con:
+        st.markdown(
+            f'<div style="text-align:center; padding:8px; background:#FDF6F0; border-radius:8px; '
+            f'border-top:3px solid {COLORS["red"]};">'
+            f'<b>Conservative</b><br/><span style="font-size:0.8rem;">CPM +15%, CVR -10%</span></div>',
+            unsafe_allow_html=True,
+        )
+    with col_base:
+        st.markdown(
+            f'<div style="text-align:center; padding:8px; background:{COLORS["light_gray"]}; border-radius:8px; '
+            f'border-top:3px solid {COLORS["blue"]};">'
+            f'<b>Base Case</b><br/><span style="font-size:0.8rem;">Current baselines</span></div>',
+            unsafe_allow_html=True,
+        )
+    with col_opt:
+        st.markdown(
+            f'<div style="text-align:center; padding:8px; background:#F0F5F1; border-radius:8px; '
+            f'border-top:3px solid {COLORS["green"]};">'
+            f'<b>Optimistic</b><br/><span style="font-size:0.8rem;">CPM -10%, CVR +10%</span></div>',
+            unsafe_allow_html=True,
+        )
+
+    scenario_rows = []
+    totals = {"conservative": {"spend": 0, "revenue": 0, "orders": 0},
+              "base": {"spend": 0, "revenue": 0, "orders": 0},
+              "optimistic": {"spend": 0, "revenue": 0, "orders": 0}}
+
     for row in projection_rows:
+        b = row["_baselines"]
+        spend = row["_spend"]
         platform = row["Platform"]
         ctype = row["Type"]
-        spend = row["_spend"]
-        baselines = row["_baselines"]
-        proj = row["_proj"]
 
-        b_cpm = baselines.get("cpm", np.nan)
-        b_ctr = baselines.get("ctr", np.nan)
-        b_cvr = baselines.get("cvr", np.nan)
-        b_aov = baselines.get("aov", np.nan)
+        cpm = b.get("cpm", np.nan)
+        ctr = b.get("ctr", np.nan)
+        cvr = b.get("cvr", np.nan)
+        aov = b.get("aov", np.nan)
 
-        with st.expander(f"📐 {platform} — {ctype} — Step-by-step calculation"):
-            st.markdown(f"**Input Spend:** {format_currency(spend)}")
-            st.markdown("")
+        # Conservative: CPM +15%, CVR -10%
+        cons = project_revenue(
+            spend,
+            cpm * 1.15 if not pd.isna(cpm) else cpm,
+            ctr,
+            cvr * 0.90 if not pd.isna(cvr) else cvr,
+            aov,
+        )
 
-            # Step 1: Impressions
-            if not pd.isna(b_cpm) and b_cpm > 0:
-                impressions_calc = spend / b_cpm * 1000
-                st.markdown(
-                    f"**Step 1 — Impressions:**  \n"
-                    f"`{format_currency(spend)} ÷ {format_currency(b_cpm)} (CPM) × 1,000 = "
-                    f"{impressions_calc:,.0f} impressions`"
-                )
-            else:
-                impressions_calc = 0
-                st.warning("CPM baseline not available — cannot compute impressions.")
+        # Base case
+        base_proj = row["_proj"]
 
-            # Step 2: Clicks (LPV)
-            if not pd.isna(b_ctr) and impressions_calc > 0:
-                clicks_calc = impressions_calc * (b_ctr / 100)
-                st.markdown(
-                    f"**Step 2 — Landing Page Views (Clicks):**  \n"
-                    f"`{impressions_calc:,.0f} impressions × {b_ctr:.2f}% (CTR) = "
-                    f"{clicks_calc:,.0f} LPV`"
-                )
-            else:
-                clicks_calc = 0
-                st.warning("CTR baseline not available — cannot compute clicks.")
+        # Optimistic: CPM -10%, CVR +10%
+        opt = project_revenue(
+            spend,
+            cpm * 0.90 if not pd.isna(cpm) else cpm,
+            ctr,
+            cvr * 1.10 if not pd.isna(cvr) else cvr,
+            aov,
+        )
 
-            # Step 3: Orders
-            if not pd.isna(b_cvr) and clicks_calc > 0:
-                orders_calc = clicks_calc * (b_cvr / 100)
-                st.markdown(
-                    f"**Step 3 — Orders (Purchases):**  \n"
-                    f"`{clicks_calc:,.0f} LPV × {b_cvr:.2f}% (CVR) = "
-                    f"{orders_calc:,.0f} orders`"
-                )
-            else:
-                orders_calc = 0
-                st.warning("CVR baseline not available — cannot compute orders.")
+        target_roas = ROAS_TARGETS.get(ctype, 8)
+        flag_cons = "!!" if cons["roas"] < target_roas * 0.75 else ("!" if cons["roas"] < target_roas else "")
 
-            # Step 4: Revenue
-            if not pd.isna(b_aov) and orders_calc > 0:
-                revenue_calc = orders_calc * b_aov
-                st.markdown(
-                    f"**Step 4 — Revenue:**  \n"
-                    f"`{orders_calc:,.0f} orders × {format_currency(b_aov)} (AOV) = "
-                    f"{format_currency(revenue_calc)}`"
-                )
-            else:
-                revenue_calc = 0
-                st.warning("AOV baseline not available — cannot compute revenue.")
+        scenario_rows.append({
+            "Platform": platform,
+            "Type": ctype,
+            "Conservative ROAS": f"{'** ' if flag_cons else ''}{format_number(cons['roas'], 1)}{' **' if flag_cons else ''}",
+            "Conservative Rev.": format_currency(cons["revenue"]),
+            "Base ROAS": format_number(base_proj["roas"], 1),
+            "Base Revenue": format_currency(base_proj["revenue"]),
+            "Optimistic ROAS": format_number(opt["roas"], 1),
+            "Optimistic Rev.": format_currency(opt["revenue"]),
+        })
 
-            # Step 5: ROAS
-            if spend > 0 and revenue_calc > 0:
-                roas_calc = revenue_calc / spend
-                st.markdown(
-                    f"**Step 5 — ROAS:**  \n"
-                    f"`{format_currency(revenue_calc)} ÷ {format_currency(spend)} = "
-                    f"{roas_calc:.1f}`"
-                )
+        totals["conservative"]["spend"] += spend
+        totals["conservative"]["revenue"] += cons["revenue"]
+        totals["conservative"]["orders"] += cons["orders"]
+        totals["base"]["spend"] += spend
+        totals["base"]["revenue"] += base_proj["revenue"]
+        totals["base"]["orders"] += base_proj["orders"]
+        totals["optimistic"]["spend"] += spend
+        totals["optimistic"]["revenue"] += opt["revenue"]
+        totals["optimistic"]["orders"] += opt["orders"]
 
-            # Baseline period reference
-            st.markdown("---")
-            st.markdown(
-                f"**Baseline reference date:** {ref_date.strftime('%d/%m/%Y')}  \n"
-                f"**CPM / CTR / CVR window:** {cpm_days} days before reference  \n"
-                f"**AOV window:** {aov_days} days before reference"
-            )
+    st.dataframe(pd.DataFrame(scenario_rows), use_container_width=True, hide_index=True)
 
-# ── Step 5: Stress Test ──────────────────────────────────────
+    # Scenario totals
+    cons_roas = totals["conservative"]["revenue"] / totals["conservative"]["spend"] if totals["conservative"]["spend"] > 0 else 0
+    base_roas = totals["base"]["revenue"] / totals["base"]["spend"] if totals["base"]["spend"] > 0 else 0
+    opt_roas = totals["optimistic"]["revenue"] / totals["optimistic"]["spend"] if totals["optimistic"]["spend"] > 0 else 0
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown(
+            f'<div style="background:#FDF6F0; padding:12px; border-radius:8px; text-align:center;">'
+            f'<div style="color:{COLORS["red"]}; font-weight:700;">Conservative</div>'
+            f'<div style="font-size:1.2rem; font-weight:700;">ROAS {cons_roas:.1f}</div>'
+            f'<div style="font-size:0.85rem;">{format_currency(totals["conservative"]["revenue"])} revenue</div>'
+            f'<div style="font-size:0.85rem;">{totals["conservative"]["orders"]:,.0f} orders</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    with col2:
+        st.markdown(
+            f'<div style="background:{COLORS["light_gray"]}; padding:12px; border-radius:8px; text-align:center;">'
+            f'<div style="color:{COLORS["blue"]}; font-weight:700;">Base Case</div>'
+            f'<div style="font-size:1.2rem; font-weight:700;">ROAS {base_roas:.1f}</div>'
+            f'<div style="font-size:0.85rem;">{format_currency(totals["base"]["revenue"])} revenue</div>'
+            f'<div style="font-size:0.85rem;">{totals["base"]["orders"]:,.0f} orders</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    with col3:
+        st.markdown(
+            f'<div style="background:#F0F5F1; padding:12px; border-radius:8px; text-align:center;">'
+            f'<div style="color:{COLORS["green"]}; font-weight:700;">Optimistic</div>'
+            f'<div style="font-size:1.2rem; font-weight:700;">ROAS {opt_roas:.1f}</div>'
+            f'<div style="font-size:0.85rem;">{format_currency(totals["optimistic"]["revenue"])} revenue</div>'
+            f'<div style="font-size:0.85rem;">{totals["optimistic"]["orders"]:,.0f} orders</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    # Risk flags
+    if cons_roas < min(ROAS_TARGETS.values()) * 0.75:
+        st.warning(
+            f"Conservative scenario drops blended ROAS to {cons_roas:.1f}, well below targets. "
+            f"Consider reducing allocation to underperforming platforms or building a contingency budget."
+        )
+
+
+# ═══════════════════════════════════════════════════════════════
+# STEP 7: PATTERN LOG CROSS-CHECK
+# ═══════════════════════════════════════════════════════════════
 st.markdown("---")
-st.subheader("Step 5: Stress Test")
-
-col_a, col_b = st.columns(2)
-
-stress_rows = []
-for row in projection_rows:
-    baselines = row["_baselines"]
-    spend = row["_spend"]
-    platform = row["Platform"]
-    ctype = row["Type"]
-
-    stress_a = stress_test(
-        spend, baselines.get("cpm"), baselines.get("ctr"),
-        baselines.get("cvr"), baselines.get("aov"), "A"
-    )
-    stress_b = stress_test(
-        spend, baselines.get("cpm"), baselines.get("ctr"),
-        baselines.get("cvr"), baselines.get("aov"), "B"
-    )
-
-    base_roas = row["_proj"]["roas"]
-    flag_a = "🔴" if stress_a["roas"] < 6 else "✅"
-    flag_b = "🔴" if stress_b["roas"] < 6 else "✅"
-
-    stress_rows.append({
-        "Platform": platform,
-        "Type": ctype,
-        "Base ROAS": format_number(base_roas, 1),
-        "Scenario A (CPM +15%)": f"{flag_a} {format_number(stress_a['roas'], 1)}",
-        "Scenario B (CVR -10%)": f"{flag_b} {format_number(stress_b['roas'], 1)}",
-    })
-
-if stress_rows:
-    st.dataframe(pd.DataFrame(stress_rows), use_container_width=True, hide_index=True)
-    any_flags = any("🔴" in r["Scenario A (CPM +15%)"] or "🔴" in r["Scenario B (CVR -10%)"] for r in stress_rows)
-    if any_flags:
-        st.warning("Some platform-type combinations drop below ROAS 6 under stress. Consider reducing allocation for those.")
-
-# ── Step 6: Pattern Log Cross-Check ──────────────────────────
-st.markdown("---")
-st.subheader("Step 6: Pattern Log Cross-Check")
+st.subheader("Step 7: Pattern Log Cross-Check")
 
 target_month_num = target_month.month
 patterns = get_patterns_for_month(target_month_num)
 
 if patterns:
-    st.markdown(f"**Found {len(patterns)} pattern(s) relevant to this month:**")
+    st.markdown(f"**Found {len(patterns)} pattern(s) relevant to {target_month.strftime('%B')}:**")
     for p in patterns:
-        with st.expander(f"📌 {p.get('date_observed', '')} — {p.get('what_happened', '')[:80]}"):
+        with st.expander(f"{p.get('date_observed', '')} — {p.get('what_happened', '')[:80]}"):
             st.markdown(f"**Rule:** {p.get('rule_for_next_time', 'N/A')}")
             st.markdown(f"**True Driver:** {p.get('true_driver', 'N/A')}")
             st.markdown(f"**Should Have Done:** {p.get('what_we_should_have_done', 'N/A')}")
 else:
     st.info("No pattern log entries found for this month. Build your pattern log in the Pattern Finder page.")
 
-# ── Forecast Summary ──────────────────────────────────────────
+
+# ═══════════════════════════════════════════════════════════════
+# FORECAST SUMMARY & SAVE
+# ═══════════════════════════════════════════════════════════════
 st.markdown("---")
 st.subheader("Forecast Summary")
 
-summary_rows = []
-for row in projection_rows:
-    baselines = row["_baselines"]
-    spend = row["_spend"]
-    stress_a = stress_test(
-        spend, baselines.get("cpm"), baselines.get("ctr"),
-        baselines.get("cvr"), baselines.get("aov"), "A"
-    )
-    stress_b = stress_test(
-        spend, baselines.get("cpm"), baselines.get("ctr"),
-        baselines.get("cvr"), baselines.get("aov"), "B"
-    )
+if projection_rows:
+    summary_rows = []
+    for row in projection_rows:
+        summary_rows.append({
+            "Platform": row["Platform"],
+            "Type": row["Type"],
+            "Spend": row["Spend"],
+            "Projected Revenue": row["Revenue"],
+            "Projected ROAS": row["ROAS"],
+            "Conservative ROAS": format_number(
+                project_revenue(
+                    row["_spend"],
+                    row["_baselines"].get("cpm", np.nan) * 1.15 if not pd.isna(row["_baselines"].get("cpm")) else np.nan,
+                    row["_baselines"].get("ctr", np.nan),
+                    row["_baselines"].get("cvr", np.nan) * 0.90 if not pd.isna(row["_baselines"].get("cvr")) else np.nan,
+                    row["_baselines"].get("aov", np.nan),
+                )["roas"], 1),
+            "Optimistic ROAS": format_number(
+                project_revenue(
+                    row["_spend"],
+                    row["_baselines"].get("cpm", np.nan) * 0.90 if not pd.isna(row["_baselines"].get("cpm")) else np.nan,
+                    row["_baselines"].get("ctr", np.nan),
+                    row["_baselines"].get("cvr", np.nan) * 1.10 if not pd.isna(row["_baselines"].get("cvr")) else np.nan,
+                    row["_baselines"].get("aov", np.nan),
+                )["roas"], 1),
+        })
 
-    summary_rows.append({
-        "Platform": row["Platform"],
-        "Type": row["Type"],
-        "Spend": row["Spend"],
-        "Projected Revenue": row["Revenue"],
-        "Projected ROAS": row["ROAS"],
-        "Stress A ROAS": format_number(stress_a["roas"], 1),
-        "Stress B ROAS": format_number(stress_b["roas"], 1),
-    })
-
-if summary_rows:
     st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
 
     # Save forecast
@@ -416,19 +593,30 @@ if summary_rows:
                     "spend": r["_spend"],
                     "revenue": r["_proj"]["revenue"],
                     "roas": r["_proj"]["roas"],
+                    "orders": r["_proj"]["orders"],
                 }
                 for r in projection_rows
+            ],
+            "weekly_steering": [
+                {
+                    "week": wb["label"],
+                    "weight_pct": week_pcts[i] if i < len(week_pcts) else 0,
+                    "spend_target": total_spend * (week_pcts[i] if i < len(week_pcts) else 0) / 100,
+                }
+                for i, wb in enumerate(week_boundaries)
             ],
             "timestamp": datetime.now().isoformat(),
         }
         log = load_forecast_log()
-        # Replace existing forecast for same month
         log = [e for e in log if e.get("month") != target_month_str]
         log.append(forecast_entry)
         save_forecast_log(log)
         st.success(f"Forecast saved for {target_month_str}.")
 
-# ── Forecast Accuracy Tracker ─────────────────────────────────
+
+# ═══════════════════════════════════════════════════════════════
+# FORECAST ACCURACY TRACKER
+# ═══════════════════════════════════════════════════════════════
 st.markdown("---")
 st.subheader("Forecast Accuracy Tracker")
 st.caption("Compare previous forecasts vs actuals")
@@ -455,7 +643,7 @@ if forecast_log:
 
         accuracy = compute_forecast_accuracy(df, month, forecast_data)
         if accuracy:
-            with st.expander(f"📊 {month} Forecast vs Actuals"):
+            with st.expander(f"{month} Forecast vs Actuals"):
                 acc_df = pd.DataFrame(accuracy)
                 for col in ["forecast_spend", "actual_spend", "forecast_revenue", "actual_revenue"]:
                     if col in acc_df.columns:
