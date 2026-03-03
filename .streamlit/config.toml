@@ -1,0 +1,11 @@
+[theme]
+# Objectif Lune — Tintin-inspired minimalist theme
+# Soft slate blue (Tintin's sweater), warm off-white, gentle contrast
+primaryColor = "#4A6FA5"
+backgroundColor = "#FAFAF7"
+secondaryBackgroundColor = "#F0EDE6"
+textColor = "#2C2C2C"
+font = "sans serif"
+
+[server]
+maxUploadSize = 200
