@@ -47,36 +47,27 @@ st.divider()
 st.header("Baseline Windows")
 st.caption("Number of days used to calculate rolling baselines")
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2 = st.columns(2)
 with col1:
     settings["aov_baseline_days"] = st.number_input(
         "AOV Baseline (days)",
         min_value=7,
         max_value=180,
         value=int(settings.get("aov_baseline_days", 60)),
-        help="Long window for AOV to smooth promotional spikes",
+        help="Long window for AOV — smooths out promotional spikes",
     )
 with col2:
-    settings["cpm_baseline_days"] = st.number_input(
-        "CPM Baseline (days)",
+    cpm_days_val = st.number_input(
+        "CPM / CTR / CVR / ROAS Baseline (days)",
         min_value=7,
         max_value=60,
         value=int(settings.get("cpm_baseline_days", 14)),
+        help="Short window used for CPM, CTR (LPV), CVR (LPV), and ROAS baselines",
     )
-with col3:
-    settings["ctr_baseline_days"] = st.number_input(
-        "CTR Baseline (days)",
-        min_value=7,
-        max_value=60,
-        value=int(settings.get("ctr_baseline_days", 14)),
-    )
-with col4:
-    settings["cvr_baseline_days"] = st.number_input(
-        "CVR Baseline (days)",
-        min_value=7,
-        max_value=60,
-        value=int(settings.get("cvr_baseline_days", 14)),
-    )
+    settings["cpm_baseline_days"] = cpm_days_val
+    # Keep in sync — the calculation engine uses cpm_baseline_days for all three
+    settings["ctr_baseline_days"] = cpm_days_val
+    settings["cvr_baseline_days"] = cpm_days_val
 
 st.divider()
 

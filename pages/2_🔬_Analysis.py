@@ -5,7 +5,6 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-import json
 
 from utils.data_loader import load_all_data
 from utils.calculations import (
@@ -16,31 +15,17 @@ from utils.calculations import (
     format_pct,
     format_number,
     format_delta,
+    load_action_log,
+    save_action_log,
 )
 from utils.anomaly_detection import diagnose
-from utils.constants import COLORS, PLATFORM_COLORS, PLATFORMS, ACTION_LOG_FILE, ROAS_TARGETS, load_settings
+from utils.constants import COLORS, PLATFORM_COLORS, PLATFORMS, ROAS_TARGETS, load_settings
 from utils.theme import inject_objectif_lune_css, render_header
 
 st.set_page_config(page_title="Deep Analysis", page_icon="🚀", layout="wide")
 inject_objectif_lune_css()
 
 render_header("Deep Analysis", "The 4-question method for structured performance analysis")
-
-
-def load_action_log() -> list:
-    if ACTION_LOG_FILE.exists():
-        try:
-            with open(ACTION_LOG_FILE, "r") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            pass
-    return []
-
-
-def save_action_log(log: list):
-    ACTION_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(ACTION_LOG_FILE, "w") as f:
-        json.dump(log, f, indent=2, default=str)
 
 
 # ── Load Data ─────────────────────────────────────────────────
@@ -226,11 +211,11 @@ if not agg.empty and "period" in agg.columns:
         yaxis_title="ROAS",
         xaxis_title="",
         height=350,
-        plot_bgcolor="white",
+        plot_bgcolor=COLORS["white"],
         margin=dict(t=50, b=20),
     )
-    fig.update_xaxes(showgrid=True, gridcolor="#F0F0F0")
-    fig.update_yaxes(showgrid=True, gridcolor="#E5E5E5")
+    fig.update_xaxes(showgrid=True, gridcolor="#E8E4DB")
+    fig.update_yaxes(showgrid=True, gridcolor="#E8E4DB")
     st.plotly_chart(fig, use_container_width=True)
 
 # ── QUESTION 2: What Drove the Change? ───────────────────────
@@ -275,11 +260,11 @@ with col_chart:
         title="Sub-KPI Delta vs Baseline (%)",
         yaxis_title="% Change",
         height=300,
-        plot_bgcolor="white",
+        plot_bgcolor=COLORS["white"],
         margin=dict(t=40, b=20),
     )
     fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(showgrid=True, gridcolor="#E5E5E5")
+    fig.update_yaxes(showgrid=True, gridcolor="#E8E4DB")
     st.plotly_chart(fig, use_container_width=True)
 
 with col_table:
@@ -353,10 +338,10 @@ if has_comparison:
         xaxis=dict(tickvals=list(range(len(tick_labels))), ticktext=tick_labels),
         yaxis_title="ROAS",
         height=350,
-        plot_bgcolor="white",
+        plot_bgcolor=COLORS["white"],
         margin=dict(t=50, b=20),
     )
-    fig.update_yaxes(showgrid=True, gridcolor="#E5E5E5")
+    fig.update_yaxes(showgrid=True, gridcolor="#E8E4DB")
     st.plotly_chart(fig, use_container_width=True)
 
     # Summary text

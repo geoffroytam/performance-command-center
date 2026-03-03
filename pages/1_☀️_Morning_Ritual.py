@@ -4,9 +4,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import json
 from datetime import datetime, timedelta
-from pathlib import Path
 
 from utils.data_loader import load_all_data
 from utils.calculations import (
@@ -17,6 +15,8 @@ from utils.calculations import (
     format_pct,
     format_number,
     format_delta,
+    load_action_log,
+    save_action_log,
 )
 from utils.anomaly_detection import diagnose, flag_anomalies_for_row
 from utils.constants import (
@@ -24,7 +24,6 @@ from utils.constants import (
     PLATFORM_COLORS,
     ROAS_TARGETS,
     load_settings,
-    ACTION_LOG_FILE,
 )
 from utils.theme import inject_objectif_lune_css, render_header
 
@@ -32,22 +31,6 @@ st.set_page_config(page_title="Morning Ritual", page_icon="🚀", layout="wide")
 inject_objectif_lune_css()
 
 render_header("Morning Ritual", "Yesterday's vital signs — anomaly detection and auto-diagnosis")
-
-
-def load_action_log() -> list:
-    if ACTION_LOG_FILE.exists():
-        try:
-            with open(ACTION_LOG_FILE, "r") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            pass
-    return []
-
-
-def save_action_log(log: list):
-    ACTION_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(ACTION_LOG_FILE, "w") as f:
-        json.dump(log, f, indent=2, default=str)
 
 
 # ── Load Data ─────────────────────────────────────────────────
@@ -318,10 +301,10 @@ if anomaly_details:
                 xaxis_title="",
                 height=300,
                 margin=dict(t=40, b=20),
-                plot_bgcolor="white",
+                plot_bgcolor=COLORS["white"],
             )
             fig.update_xaxes(showgrid=False)
-            fig.update_yaxes(showgrid=True, gridcolor="#E5E5E5")
+            fig.update_yaxes(showgrid=True, gridcolor="#E8E4DB")
             st.plotly_chart(fig, use_container_width=True)
 else:
     st.success("No anomalies detected. All platforms performing within baseline tolerance.")

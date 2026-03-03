@@ -69,14 +69,17 @@ def calculate_baselines(
             return np.nan
         return num / den * multiplier
 
+    roas_14d = weighted_ratio("revenue", "spend", short_window)
+
     return {
         "aov": weighted_ratio("revenue", "conversions", aov_window),
         "cpm": weighted_ratio("spend", "impressions", short_window, 1000),
         "ctr": weighted_ratio("clicks", "impressions", short_window, 100),
         "cvr": weighted_ratio("conversions", "clicks", short_window, 100),
+        "roas": roas_14d,  # canonical key used by anomaly detection & diagnose()
         "roas_7d": weighted_ratio("revenue", "spend", week_window),
         "roas_30d": weighted_ratio("revenue", "spend", month_window),
-        "roas_14d": weighted_ratio("revenue", "spend", short_window),
+        "roas_14d": roas_14d,
         "spend": safe_mean(short_window.groupby("date")["spend"].sum()) if not short_window.empty else np.nan,
         "conversions": safe_mean(short_window.groupby("date")["conversions"].sum()) if not short_window.empty else np.nan,
     }
@@ -279,3 +282,25 @@ def format_delta(pct_delta: float) -> str:
         return "—"
     arrow = "+" if pct_delta >= 0 else ""
     return f"{arrow}{pct_delta:.1%}"
+
+
+def load_action_log() -> list:
+    """Load the daily action log from JSON file."""
+    from utils.constants import ACTION_LOG_FILE
+    if ACTION_LOG_FILE.exists():
+        try:
+            with open(ACTION_LOG_FILE, "r") as f:
+                import json
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+    return []
+
+
+def save_action_log(log: list):
+    """Save the daily action log to JSON file."""
+    from utils.constants import ACTION_LOG_FILE
+    import json
+    ACTION_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(ACTION_LOG_FILE, "w") as f:
+        json.dump(log, f, indent=2, default=str)

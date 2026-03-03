@@ -32,83 +32,76 @@ if "upload_counter" not in st.session_state:
 def main():
     inject_objectif_lune_css()
 
-    # ── Sidebar: Data Upload ──────────────────────────────────
+    # ── Sidebar ─────────────────────────────────────────────────
     with st.sidebar:
         render_sidebar_brand()
-        st.divider()
 
-        # Data status indicator
+        # Data status — always visible, compact
         df = st.session_state.data
         if df.empty:
-            st.warning("No data loaded. Upload CSV files to get started.")
+            st.caption("No data loaded")
         else:
             summary = get_data_summary(df)
-            st.success(f"**{summary['total_rows']:,}** rows loaded")
             st.caption(
-                f"{summary['date_range'][0].strftime('%d/%m/%Y')} — "
+                f"**{summary['total_rows']:,} rows** · "
+                f"{summary['date_range'][0].strftime('%d/%m/%Y')} – "
                 f"{summary['date_range'][1].strftime('%d/%m/%Y')}"
             )
-            st.caption(f"Platforms: {', '.join(summary['platforms'])}")
 
         st.divider()
 
-        # File upload — use upload_counter as key so we can reset the widget
-        st.subheader("Upload Data")
-        platform_choice = st.selectbox(
-            "Platform (auto-detect if unsure)",
-            ["Auto-detect"] + PLATFORMS,
-        )
-        uploaded_files = st.file_uploader(
-            "Upload CSV exports",
-            type=["csv"],
-            accept_multiple_files=True,
-            help="Upload daily CSV exports from your ad platforms or your Excel tracker.",
-            key=f"uploader_{st.session_state.upload_counter}",
-        )
+        # File upload — inside expander to save vertical space
+        expand_upload = df.empty  # auto-expand when no data loaded
+        with st.expander("Upload Data", expanded=expand_upload):
+            platform_choice = st.selectbox(
+                "Platform",
+                ["Auto-detect"] + PLATFORMS,
+                key="platform_select",
+                label_visibility="collapsed",
+            )
+            uploaded_files = st.file_uploader(
+                "CSV files",
+                type=["csv"],
+                accept_multiple_files=True,
+                label_visibility="collapsed",
+                key=f"uploader_{st.session_state.upload_counter}",
+            )
 
-        if uploaded_files:
-            if st.button("Process Uploads", type="primary", use_container_width=True):
-                all_new = []
-                for file in uploaded_files:
-                    with st.spinner(f"Processing {file.name}..."):
-                        override = None if platform_choice == "Auto-detect" else platform_choice
-                        result_df, detected, warnings = process_uploaded_file(file, override)
+            if uploaded_files:
+                if st.button("Process", type="primary", use_container_width=True):
+                    all_new = []
+                    for file in uploaded_files:
+                        with st.spinner(f"{file.name}..."):
+                            override = None if platform_choice == "Auto-detect" else platform_choice
+                            result_df, detected, warnings = process_uploaded_file(file, override)
 
-                        if not result_df.empty:
-                            all_new.append(result_df)
-                            st.success(f"✅ {file.name} — {detected} ({len(result_df)} rows)")
+                            if not result_df.empty:
+                                all_new.append(result_df)
+                                st.success(f"✅ {file.name} ({len(result_df)} rows)")
+                            else:
+                                st.error(f"❌ {file.name}")
+                            for w in warnings:
+                                st.warning(w)
+
+                    if all_new:
+                        new_data = pd.concat(all_new, ignore_index=True)
+                        if not st.session_state.data.empty:
+                            combined = pd.concat(
+                                [st.session_state.data, new_data], ignore_index=True
+                            )
+                            dedup_cols_full = ["date", "platform", "campaign_name", "adset_name", "campaign_type"]
+                            dedup_cols = [c for c in dedup_cols_full if c in combined.columns]
+                            combined = combined.drop_duplicates(subset=dedup_cols, keep="last")
                         else:
-                            st.error(f"❌ {file.name} — failed to process")
-                        for w in warnings:
-                            st.warning(w)
+                            combined = new_data
+                        st.session_state.data = combined
+                        save_merged_data(combined)
+                        st.session_state.upload_counter += 1
+                        st.rerun()
 
-                if all_new:
-                    new_data = pd.concat(all_new, ignore_index=True)
-                    if not st.session_state.data.empty:
-                        combined = pd.concat(
-                            [st.session_state.data, new_data], ignore_index=True
-                        )
-                        # Smart dedup: use all available identifying columns
-                        # For tracker format: date + platform + campaign_type is enough
-                        # For raw exports: date + platform + campaign_name + adset_name is more precise
-                        dedup_cols_full = ["date", "platform", "campaign_name", "adset_name", "campaign_type"]
-                        dedup_cols = [c for c in dedup_cols_full if c in combined.columns]
-                        combined = combined.drop_duplicates(subset=dedup_cols, keep="last")
-                    else:
-                        combined = new_data
-                    st.session_state.data = combined
-                    save_merged_data(combined)
-                    st.success(f"**Total: {len(combined):,} rows** across all platforms")
-
-                    # Increment counter to reset the file uploader for next batch
-                    st.session_state.upload_counter += 1
-                    st.rerun()
-
-        st.divider()
-
-        # Quick actions
+        # Clear data button — only when data is loaded
         if not st.session_state.data.empty:
-            if st.button("🗑️ Clear All Data", type="secondary", use_container_width=True):
+            if st.button("Clear All Data", type="secondary", use_container_width=True):
                 st.session_state.data = pd.DataFrame()
                 processed_file = PROCESSED_DIR / "merged_data.parquet"
                 if processed_file.exists():

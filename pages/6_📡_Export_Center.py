@@ -27,7 +27,7 @@ if "data" not in st.session_state or st.session_state.data.empty:
 df = st.session_state.data
 
 # ── Export Filters ────────────────────────────────────────────
-st.subheader("Export Filters")
+st.subheader("Filters")
 
 col1, col2, col3 = st.columns(3)
 
@@ -72,53 +72,56 @@ filtered_mask = (
     & (export_df["platform"].isin(selected_platforms))
 )
 preview_count = filtered_mask.sum()
-st.info(f"Export will include **{preview_count:,}** rows from **{len(selected_platforms)}** platforms")
+days_count = (pd.Timestamp(end_date) - pd.Timestamp(start_date)).days + 1
 
-# ── Export Buttons ────────────────────────────────────────────
+st.caption(
+    f"**{preview_count:,}** rows · **{len(selected_platforms)}** platforms · "
+    f"**{days_count}** days ({start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')})"
+)
+
+# ── Export Cards ──────────────────────────────────────────────
 st.markdown("---")
 
 col_excel, col_pptx, col_pbi = st.columns(3)
 
+# ── Excel ─────────────────────────────────────────────────────
 with col_excel:
-    st.markdown("### Excel Report")
-    st.markdown(
-        "Full report with daily, weekly, and monthly sheets. "
-        "Includes conditional formatting, baselines, and embedded charts."
+    st.markdown("#### Excel Report")
+    st.caption(
+        "Executive summary, daily/weekly/monthly data with conditional formatting, "
+        "baselines, and ROAS charts. Ready to share with your team."
     )
-    include_charts = st.checkbox("Include charts in Excel", value=True, key="excel_charts")
 
     if st.button("Generate Excel", type="primary", use_container_width=True, key="gen_excel"):
-        with st.spinner("Generating Excel report..."):
+        with st.spinner("Building Excel report..."):
             try:
                 excel_buffer = generate_excel_report(
                     export_df,
                     start_date,
                     end_date,
                     platforms=selected_platforms,
-                    include_charts=include_charts,
                 )
                 filename = f"Performance_Report_{start_date}_{end_date}.xlsx"
                 st.download_button(
-                    label="Download Excel",
+                    label="Download .xlsx",
                     data=excel_buffer,
                     file_name=filename,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True,
                 )
-                st.success("Excel report generated.")
             except Exception as e:
-                st.error(f"Error generating Excel report: {e}")
+                st.error(f"Error: {e}")
 
+# ── PowerPoint ────────────────────────────────────────────────
 with col_pptx:
-    st.markdown("### PowerPoint Report")
-    st.markdown(
-        "Presentation-ready slides with executive summary, "
-        "platform breakdowns, and trend charts."
+    st.markdown("#### PowerPoint Deck")
+    st.caption(
+        "Presentation-ready slides: executive summary, platform breakdown, "
+        "per-platform deep dives, and auto-generated key takeaways."
     )
-    st.caption("Charts require `kaleido` package for image export")
 
     if st.button("Generate PowerPoint", type="primary", use_container_width=True, key="gen_pptx"):
-        with st.spinner("Generating PowerPoint report..."):
+        with st.spinner("Building PowerPoint deck..."):
             try:
                 pptx_buffer = generate_pptx_report(
                     export_df,
@@ -128,26 +131,25 @@ with col_pptx:
                 )
                 filename = f"Performance_Report_{start_date}_{end_date}.pptx"
                 st.download_button(
-                    label="Download PowerPoint",
+                    label="Download .pptx",
                     data=pptx_buffer,
                     file_name=filename,
                     mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
                     use_container_width=True,
                 )
-                st.success("PowerPoint report generated.")
             except Exception as e:
-                st.error(f"Error generating PowerPoint report: {e}")
+                st.error(f"Error: {e}")
 
+# ── Power BI ─────────────────────────────────────────────────
 with col_pbi:
-    st.markdown("### Power BI Data Model")
-    st.markdown(
-        "Structured Excel file with fact and dimension tables. "
-        "Ready for Power BI import with relationships."
+    st.markdown("#### Power BI Model")
+    st.caption(
+        "Structured data model with fact tables (daily/weekly/monthly), "
+        "dimension tables (date, platform, baselines), and forecast vs actuals."
     )
-    st.caption("Sheets: fact_daily, dim_platform, dim_baselines, fact_forecast")
 
-    if st.button("Generate Power BI File", type="primary", use_container_width=True, key="gen_pbi"):
-        with st.spinner("Generating Power BI data model..."):
+    if st.button("Generate Power BI", type="primary", use_container_width=True, key="gen_pbi"):
+        with st.spinner("Building Power BI data model..."):
             try:
                 pbi_buffer = generate_powerbi_export(
                     export_df,
@@ -155,40 +157,34 @@ with col_pbi:
                     end_date,
                     platforms=selected_platforms,
                 )
-                filename = f"PowerBI_DataModel_{start_date}_{end_date}.xlsx"
+                filename = f"PowerBI_Model_{start_date}_{end_date}.xlsx"
                 st.download_button(
-                    label="Download Power BI File",
+                    label="Download .xlsx",
                     data=pbi_buffer,
                     file_name=filename,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True,
                 )
-                st.success("Power BI data model generated.")
             except Exception as e:
-                st.error(f"Error generating Power BI file: {e}")
+                st.error(f"Error: {e}")
 
-# ── Export Schema Reference ───────────────────────────────────
+# ── Schema Reference ─────────────────────────────────────────
 st.markdown("---")
-with st.expander("Power BI Schema Reference"):
-    st.markdown("""
-    **fact_daily** — One row per date x platform x campaign_type x product_tier
-    - `date`, `platform`, `campaign_type`, `product_tier`
-    - `spend`, `impressions`, `clicks`, `conversions`, `revenue`
-    - `cpm`, `ctr`, `cvr`, `aov`, `roas`, `cpa`
+with st.expander("Power BI Schema & Relationships"):
+    st.markdown("""**Fact Tables:**
+- `fact_daily` — date × platform × campaign_type (spend, revenue, impressions, clicks, conversions, KPIs)
+- `fact_weekly` — week × platform × campaign_type (pre-aggregated)
+- `fact_monthly` — month × platform × campaign_type (pre-aggregated)
+- `fact_forecast` — forecast vs actuals by month × platform
 
-    **dim_platform** — Platform dimension table
-    - `platform`, `roas_target_prospecting`, `roas_target_retargeting`
+**Dimension Tables:**
+- `dim_date` — calendar dimension (year, quarter, month, week, day, weekend flag)
+- `dim_platform` — platform + ROAS targets
+- `dim_campaign_type` — campaign type + ROAS target
+- `dim_baselines` — current rolling baselines per platform × type
 
-    **dim_baselines** — Current baseline values per platform x campaign_type
-    - `platform`, `campaign_type`
-    - `baseline_aov_60d`, `baseline_cpm_14d`, `baseline_ctr_14d`, `baseline_cvr_14d`
-
-    **fact_forecast** — Forecast vs actuals
-    - `month`, `platform`, `campaign_type`
-    - `forecast_spend`, `forecast_revenue`, `forecast_roas`
-    - `actual_spend`, `actual_revenue`, `actual_roas`, `delta_pct`
-
-    **Relationships:**
-    - `fact_daily.platform` → `dim_platform.platform`
-    - `fact_daily.platform + campaign_type` → `dim_baselines.platform + campaign_type`
-    """)
+**Relationships:**
+- `fact_daily.date` → `dim_date.date`
+- `fact_daily.platform` → `dim_platform.platform`
+- `fact_daily.campaign_type` → `dim_campaign_type.campaign_type`
+- `fact_daily.platform + campaign_type` → `dim_baselines.platform + campaign_type`""")
