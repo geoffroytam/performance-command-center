@@ -190,7 +190,23 @@ hr {
     background: transparent;
 }
 
-</style>""")
+</style>
+<script>
+// Rename "app" sidebar nav label to "Performance Command Center"
+(function renameAppLabel() {
+    const observer = new MutationObserver(function() {
+        const navLinks = document.querySelectorAll('[data-testid="stSidebarNav"] a span');
+        navLinks.forEach(function(span) {
+            if (span.textContent.trim().toLowerCase() === 'app') {
+                span.textContent = 'Performance Command Center';
+            }
+        });
+    });
+    observer.observe(document.body, {childList: true, subtree: true});
+    // Also run immediately in case DOM is already loaded
+    setTimeout(renameAppLabel, 500);
+})();
+</script>""")
 
 
 def render_header(title: str, subtitle: str = ""):
