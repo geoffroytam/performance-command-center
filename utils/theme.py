@@ -40,11 +40,23 @@ def inject_objectif_lune_css():
     font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif !important;
 }
 
-/* ── Typography ────────────────────────────────────────── */
-html, body, [class*="css"],
-p, span, li, td, th, label, div,
-.stMarkdown, .stText {
+/* ── Typography (narrow selector — avoids overriding Material Icons) */
+html, body,
+p, td, th, label,
+.stMarkdown, .stText,
+[data-testid="stMetricLabel"],
+[data-testid="stMetricValue"],
+[data-testid="stCaptionContainer"],
+[data-testid="stExpander"] summary span:not(.material-symbols-rounded),
+[data-testid="stSidebar"] [data-testid="stSidebarNav"] span:not(.material-symbols-rounded) {
     font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif !important;
+}
+
+/* ── Protect Material Icons from font override ───────── */
+.material-symbols-rounded,
+.material-icons,
+[data-testid="stIcon"] {
+    font-family: 'Material Symbols Rounded', 'Material Icons' !important;
 }
 
 h1 {
@@ -83,11 +95,20 @@ h4, h5, h6 {
     text-transform: uppercase !important;
     letter-spacing: 0.5px !important;
     color: #636359 !important;
+    white-space: normal !important;
+    overflow-wrap: break-word !important;
+    word-break: break-word !important;
+    line-height: 1.3 !important;
 }
 
 [data-testid="stMetricValue"] {
     font-weight: 700 !important;
     color: #2D3E50 !important;
+    white-space: normal !important;
+    overflow-wrap: break-word !important;
+    word-break: break-word !important;
+    font-size: clamp(1rem, 2vw, 1.5rem) !important;
+    line-height: 1.25 !important;
 }
 
 [data-testid="stMetricDelta"] {

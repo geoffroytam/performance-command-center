@@ -215,7 +215,7 @@ try:
 except Exception:
     yoy_growth = 0.0
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4 = st.columns([1.3, 1, 1, 1.3])
 
 with col1:
     st.metric(

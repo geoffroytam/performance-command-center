@@ -70,7 +70,7 @@ def get_last_month_actuals(df: pd.DataFrame, reference_date=None) -> dict:
         "pr_split": pr_split,
         "empty": False,
         "period": f"{last_month_start.strftime('%Y-%m-%d')} to {last_month_end.strftime('%Y-%m-%d')}",
-        "month_name": last_month_start.strftime("%B %Y"),
+        "month_name": last_month_start.strftime("%b %Y"),
     }
 
 

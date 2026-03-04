@@ -210,6 +210,10 @@ Plus all 7 page files in `pages/`.
 8. **CSV column assumptions** — column names must match `PLATFORM_COLUMN_MAPS` and `TRACKER_COLUMN_MAP` in `utils/constants.py`
 9. **No `st.markdown(unsafe_allow_html=True)`** — use `st.html()` instead
 10. **Entry point preserved** — `app.py` filename must never be changed
+11. **Material Icons integrity** — Verify no `font-family !important` rule targets `span`, `div`, or `li` globally (breaks Streamlit's Material Icons rendering for sidebar icons and expander arrows)
+12. **Metric overflow** — Verify `[data-testid="stMetricLabel"]` and `[data-testid="stMetricValue"]` have `white-space: normal` and `overflow-wrap: break-word` rules to prevent truncation with ellipsis
+13. **Column proportions** — When `st.metric()` shares a row with `st.number_input()`, verify metrics get wider columns (≥1.2x weight) to display full currency values
+14. **Streamlit Cloud rendering** — After deploy, visually confirm: (a) sidebar icons render as icons not text, (b) expander arrows render correctly, (c) metric values show in full without ellipsis
 
 ### Severity Levels
 - **P1 (Critical):** Breaks the app — syntax errors, missing imports, broken entry point, runtime crashes
