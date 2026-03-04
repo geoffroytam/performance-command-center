@@ -30,33 +30,43 @@ def inject_objectif_lune_css():
    Every rule uses !important to override Streamlit Cloud defaults.
    ═══════════════════════════════════════════════════════════ */
 
-/* ── Root containers ───────────────────────────────────── */
+/* ── Root containers (background only — NO font-family here!) ── */
 [data-testid="stAppViewContainer"],
 [data-testid="stAppViewContainer"] > section,
 .stMainBlockContainer,
 [data-testid="stMainBlockContainer"],
 .stApp {
     background-color: #FAFAF7 !important;
-    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif !important;
 }
 
-/* ── Typography (narrow selector — avoids overriding Material Icons) */
+/* ── Typography — explicit text-only selectors ─────────────── */
 html, body,
 p, td, th, label,
-.stMarkdown, .stText,
+h1, h2, h3, h4, h5, h6,
+.stMarkdown, .stMarkdown p, .stMarkdown li,
+.stText,
 [data-testid="stMetricLabel"],
 [data-testid="stMetricValue"],
+[data-testid="stMetricDelta"],
 [data-testid="stCaptionContainer"],
-[data-testid="stExpander"] summary span:not(.material-symbols-rounded),
-[data-testid="stSidebar"] [data-testid="stSidebarNav"] span:not(.material-symbols-rounded) {
+[data-testid="stAlert"] p,
+[data-testid="stNotification"] p,
+.stTabs [data-baseweb="tab"],
+[data-baseweb="select"],
+[data-baseweb="menu"] li {
     font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif !important;
 }
 
-/* ── Protect Material Icons from font override ───────── */
+/* ── Protect ALL Material Icons from font cascade ────────── */
+[data-testid="stIcon"],
+[data-testid="stExpanderToggleIcon"],
 .material-symbols-rounded,
 .material-icons,
-[data-testid="stIcon"] {
-    font-family: 'Material Symbols Rounded', 'Material Icons' !important;
+[data-testid="stSidebar"] [data-testid="stSidebarNav"] [data-testid="stIcon"],
+[data-testid="stExpander"] summary svg,
+[data-testid="stExpander"] summary > span:first-child,
+[data-testid="stSidebar"] [data-testid="stSidebarNav"] li > a > span:first-child {
+    font-family: 'Material Symbols Rounded', 'Material Icons', sans-serif !important;
 }
 
 h1 {
@@ -352,18 +362,43 @@ hr {
 
 </style>
 <script>
-// Rename "app" sidebar nav label to "Performance Command Center"
-(function renameAppLabel() {
-    const observer = new MutationObserver(function() {
-        const navLinks = document.querySelectorAll('[data-testid="stSidebarNav"] a span');
-        navLinks.forEach(function(span) {
-            if (span.textContent.trim().toLowerCase() === 'app') {
-                span.textContent = 'Performance Command Center';
+(function fixIconsAndLabels() {
+    // Known Material Symbols icon names used by Streamlit
+    var iconNames = ['arrow_right', 'arrow_drop_down', 'arrow_drop_up',
+        'arrow_forward_ios', 'chevron_right', 'expand_more', 'expand_less',
+        'keyboard_double_arrow_right', 'keyboard_double_arrow_left',
+        'close', 'check', 'search', 'menu', 'more_vert', 'info',
+        'warning', 'error', 'upload_file', 'download', 'settings'];
+    var iconFont = "'Material Symbols Rounded', 'Material Icons', sans-serif";
+
+    function fixIcons() {
+        // Fix expander icons
+        document.querySelectorAll('[data-testid="stExpander"] summary span').forEach(function(s) {
+            var t = s.textContent.trim();
+            if (iconNames.indexOf(t) !== -1) {
+                s.style.setProperty('font-family', iconFont, 'important');
             }
         });
-    });
+        // Fix sidebar nav icons
+        document.querySelectorAll('[data-testid="stSidebarNav"] span').forEach(function(s) {
+            var t = s.textContent.trim();
+            if (iconNames.indexOf(t) !== -1) {
+                s.style.setProperty('font-family', iconFont, 'important');
+            } else if (t.toLowerCase() === 'app') {
+                s.textContent = 'Performance Command Center';
+            }
+        });
+        // Fix any other stIcon elements
+        document.querySelectorAll('[data-testid="stIcon"]').forEach(function(s) {
+            s.style.setProperty('font-family', iconFont, 'important');
+        });
+    }
+
+    var observer = new MutationObserver(fixIcons);
     observer.observe(document.body, {childList: true, subtree: true});
-    setTimeout(renameAppLabel, 500);
+    fixIcons();
+    setTimeout(fixIcons, 300);
+    setTimeout(fixIcons, 1000);
 })();
 </script>""")
 
