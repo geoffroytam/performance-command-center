@@ -8,13 +8,15 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, numbers, NamedStyle
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.utils import get_column_letter
+from openpyxl.chart import BarChart, LineChart, Reference
+from openpyxl.formatting.rule import DataBarRule
 
 from utils.calculations import (
     calculate_baselines,
     aggregate_by_period,
     aggregate_for_date,
 )
-from utils.constants import COLORS, ROAS_TARGETS, load_settings
+from utils.constants import COLORS, ROAS_TARGETS, PLATFORM_COLORS, load_settings
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +67,30 @@ _FILL_KPI_BG = PatternFill(start_color=_CLR_LIGHT_GRAY, end_color=_CLR_LIGHT_GRA
 _ALIGN_CENTER = Alignment(horizontal="center", vertical="center", wrap_text=False)
 _ALIGN_LEFT = Alignment(horizontal="left", vertical="center", wrap_text=False)
 _ALIGN_RIGHT = Alignment(horizontal="right", vertical="center", wrap_text=False)
+
+# ---------------------------------------------------------------------------
+# Platform colour fills (from PLATFORM_COLORS)
+# ---------------------------------------------------------------------------
+_PLATFORM_FILLS = {}
+for _plat_name, _hex_color in PLATFORM_COLORS.items():
+    _PLATFORM_FILLS[_plat_name] = PatternFill(
+        start_color=_hex_color.lstrip("#"),
+        end_color=_hex_color.lstrip("#"),
+        fill_type="solid"
+    )
+
+# ---------------------------------------------------------------------------
+# Orange accent & totals row styles
+# ---------------------------------------------------------------------------
+_FILL_ACCENT_ORANGE = PatternFill(start_color="C78B52", end_color="C78B52", fill_type="solid")
+_FILL_TOTALS = PatternFill(start_color=_CLR_HEADER_BG, end_color=_CLR_HEADER_BG, fill_type="solid")
+_FONT_TOTALS = Font(name="Calibri", bold=True, color="FFFFFF", size=10)
+_BORDER_TOTALS = Border(
+    top=Side(style="medium", color=_CLR_HEADER_BG),
+    bottom=Side(style="medium", color=_CLR_HEADER_BG),
+    left=Side(style="thin", color=_CLR_BORDER),
+    right=Side(style="thin", color=_CLR_BORDER),
+)
 
 # ---------------------------------------------------------------------------
 # Number format strings (Excel-native, not Python formatting)
@@ -220,6 +246,82 @@ def _add_autofilter(ws, header_row: int, num_cols: int, num_data_rows: int):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Chart / conditional-formatting helpers
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _add_platform_spend_chart(ws, data_start_row, data_end_row, spend_col, chart_anchor="K3"):
+    """Add a bar chart showing spend by platform to the worksheet."""
+    chart = BarChart()
+    chart.type = "col"
+    chart.title = "Spend by Platform"
+    chart.style = 10
+    chart.y_axis.title = "Spend (R$)"
+    chart.y_axis.numFmt = '#,##0'
+
+    data_ref = Reference(ws, min_col=spend_col, min_row=data_start_row - 1,
+                         max_row=data_end_row, max_col=spend_col)
+    cats_ref = Reference(ws, min_col=1, min_row=data_start_row,
+                         max_row=data_end_row)
+    chart.add_data(data_ref, titles_from_data=True)
+    chart.set_categories(cats_ref)
+    chart.shape = 4
+    chart.width = 16
+    chart.height = 10
+
+    # Brand color
+    if chart.series:
+        chart.series[0].graphicalProperties.solidFill = "4A6FA5"
+
+    ws.add_chart(chart, chart_anchor)
+
+
+def _add_daily_trend_chart(ws, num_data_rows, spend_col, revenue_col):
+    """Add a line chart showing daily spend & revenue trend."""
+    if num_data_rows < 2:
+        return
+
+    chart = LineChart()
+    chart.title = "Daily Spend & Revenue Trend"
+    chart.style = 10
+    chart.y_axis.title = "R$"
+    chart.y_axis.numFmt = '#,##0'
+
+    # Limit to last 60 days for readability
+    start_row = max(2, num_data_rows + 1 - 60)
+    end_row = num_data_rows + 1
+
+    spend_ref = Reference(ws, min_col=spend_col, min_row=1, max_row=end_row)
+    rev_ref = Reference(ws, min_col=revenue_col, min_row=1, max_row=end_row)
+    cats_ref = Reference(ws, min_col=1, min_row=start_row, max_row=end_row)
+
+    chart.add_data(spend_ref, titles_from_data=True)
+    chart.add_data(rev_ref, titles_from_data=True)
+    chart.set_categories(cats_ref)
+
+    chart.width = 30
+    chart.height = 12
+
+    # Style: blue for spend, green for revenue
+    if len(chart.series) >= 1:
+        chart.series[0].graphicalProperties.line.solidFill = "4A6FA5"
+    if len(chart.series) >= 2:
+        chart.series[1].graphicalProperties.line.solidFill = "6B8F71"
+
+    ws.add_chart(chart, f"A{end_row + 3}")
+
+
+def _add_data_bars(ws, col_letter, start_row, end_row, color="4A6FA5"):
+    """Add data bar conditional formatting to a column range."""
+    if start_row >= end_row:
+        return
+    rule = DataBarRule(
+        start_type="min", end_type="max",
+        color=color, showValue=True,
+    )
+    ws.conditional_formatting.add(f"{col_letter}{start_row}:{col_letter}{end_row}", rule)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Sheet builders
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -236,6 +338,12 @@ def _build_executive_summary(wb, filtered: pd.DataFrame, start_date, end_date, f
     title_cell = ws.cell(row=1, column=1, value=f"Performance Report  —  {date_str}")
     _apply_cell_style(title_cell, font=_FONT_TITLE, alignment=Alignment(horizontal="left", vertical="center"))
     ws.row_dimensions[1].height = 36
+
+    # Orange accent bar (row 2)
+    for c in range(1, 10):
+        cell = ws.cell(row=2, column=c)
+        cell.fill = _FILL_ACCENT_ORANGE
+    ws.row_dimensions[2].height = 4
 
     # ── KPI Cards ─────────────────────────────────────────────
     total_spend = filtered["spend"].sum()
@@ -350,6 +458,10 @@ def _build_executive_summary(wb, filtered: pd.DataFrame, start_date, end_date, f
     type_col = 2  # column B
     _apply_roas_conditional(ws, roas_col, type_col, data_start, data_start + len(data_rows) - 1)
 
+    # Spend-by-platform bar chart
+    if data_rows:
+        _add_platform_spend_chart(ws, data_start, data_start + len(data_rows) - 1, spend_col=3)
+
     # ── Totals row ────────────────────────────────────────────
     totals_row = data_start + len(data_rows)
     total_imp = agg["impressions"].sum()
@@ -459,6 +571,12 @@ def _build_daily_data(wb, filtered: pd.DataFrame):
     if data_rows:
         _apply_roas_conditional(ws, 6, 3, 2, 1 + len(data_rows))
 
+    # Daily trend chart (Spend=col 4, Revenue=col 5)
+    if data_rows:
+        _add_daily_trend_chart(ws, len(data_rows), spend_col=4, revenue_col=5)
+        _add_data_bars(ws, get_column_letter(4), 2, len(data_rows) + 1, "4A6FA5")
+        _add_data_bars(ws, get_column_letter(5), 2, len(data_rows) + 1, "6B8F71")
+
     # Freeze panes, auto-filter
     ws.freeze_panes = "A2"
     _add_autofilter(ws, 1, len(columns), len(data_rows))
@@ -550,6 +668,9 @@ def _build_weekly_trends(wb, filtered: pd.DataFrame):
         _apply_wow_formatting(ws, 7, 2, end_row, higher_is_better=True)
         # CPM WoW (col 10) - lower is better
         _apply_wow_formatting(ws, 10, 2, end_row, higher_is_better=False)
+        # Data bars on Spend (col 4) and Revenue (col 5)
+        _add_data_bars(ws, get_column_letter(4), 2, end_row, "4A6FA5")
+        _add_data_bars(ws, get_column_letter(5), 2, end_row, "6B8F71")
 
     ws.freeze_panes = "A2"
     _add_autofilter(ws, 1, len(columns), len(data_rows))
@@ -632,6 +753,9 @@ def _build_monthly_summary(wb, filtered: pd.DataFrame):
         end_row = 1 + len(data_rows)
         _apply_roas_conditional(ws, 6, 3, 2, end_row)
         _apply_wow_formatting(ws, 7, 2, end_row, higher_is_better=True)
+        # Data bars on Spend (col 4) and Revenue (col 5)
+        _add_data_bars(ws, get_column_letter(4), 2, end_row, "4A6FA5")
+        _add_data_bars(ws, get_column_letter(5), 2, end_row, "6B8F71")
 
     ws.freeze_panes = "A2"
     _add_autofilter(ws, 1, len(columns), len(data_rows))

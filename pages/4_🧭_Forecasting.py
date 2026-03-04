@@ -174,21 +174,27 @@ avg_trends = compute_mom_trends(monthly_kpis, year_weights=year_weights, exclude
 st.markdown("---")
 st.subheader("Step 1: Total Cost Envelope")
 
-# Use the most recent complete month for "last month" actuals
-# For future months, fall back to the latest month with data
-try:
-    last_month = get_last_month_actuals(df, ref_date)
-except Exception:
-    last_month = {"total_spend": 0, "platforms": {}, "platform_pcts": {}, "pr_split": {}, "empty": True}
+# Try M-1 of target month first (the month immediately before the forecast target).
+# If no data exists for that month, fall back to the latest available month in data.
+last_month = {"total_spend": 0, "platforms": {}, "platform_pcts": {}, "pr_split": {}, "empty": True}
 
+# Attempt 1: M-1 of target month
 try:
-    yoy_growth = compute_yoy_growth_ratio(df, ref_date)
+    target_m1_actuals = get_last_month_actuals(df, month_start)
+    if target_m1_actuals.get("total_spend", 0) > 0:
+        last_month = target_m1_actuals
 except Exception:
-    yoy_growth = 0.0
+    pass
 
-# If last month returned empty, try using the latest available month
+# Attempt 2: M-1 of latest data date
 if last_month.get("empty", False) or last_month["total_spend"] == 0:
-    # Fallback: use the month containing the latest data
+    try:
+        last_month = get_last_month_actuals(df, ref_date)
+    except Exception:
+        pass
+
+# Attempt 3: use the month containing the latest data itself
+if last_month.get("empty", False) or last_month["total_spend"] == 0:
     fallback_ref = max_data_date.replace(day=1) + timedelta(days=32)
     fallback_ref = fallback_ref.replace(day=1)
     try:
@@ -196,13 +202,27 @@ if last_month.get("empty", False) or last_month["total_spend"] == 0:
     except Exception:
         last_month = {"total_spend": 0, "platforms": {}, "platform_pcts": {}, "pr_split": {}, "empty": True}
 
-    if last_month["total_spend"] > 0:
-        st.caption(f"Using latest available month as reference: {last_month.get('period', 'N/A')}")
+# Dynamic baseline label
+baseline_label = last_month.get("month_name", "N/A")
+if baseline_label == "N/A" and last_month.get("period"):
+    try:
+        baseline_label = pd.Timestamp(last_month["period"].split(" to ")[0]).strftime("%B %Y")
+    except Exception:
+        baseline_label = "N/A"
+
+try:
+    yoy_growth = compute_yoy_growth_ratio(df, ref_date)
+except Exception:
+    yoy_growth = 0.0
 
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    st.metric("Last Month Actual Spend", format_currency(last_month["total_spend"]))
+    st.metric(
+        f"Baseline Spend ({baseline_label})",
+        format_currency(last_month["total_spend"]),
+        help=f"Actual spend from {baseline_label}, the most recent complete month with data.",
+    )
 with col2:
     yoy_pct = st.number_input(
         "YoY Growth Ratio (%)",

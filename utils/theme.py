@@ -23,12 +23,28 @@ _ROCKET_SVG_LARGE = '<svg width="64" height="64" viewBox="0 0 100 100" fill="non
 
 def inject_objectif_lune_css():
     """Inject custom CSS for the Objectif Lune theme. Call once per page."""
-    st.html("""<style>
-/* ── Objectif Lune — Ligne Claire Theme ──────────────── */
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap');
+    st.html("""<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* ══ Objectif Lune — Ligne Claire Theme ══════════════════
+   Tintin-inspired minimalist design system.
+   Every rule uses !important to override Streamlit Cloud defaults.
+   ═══════════════════════════════════════════════════════════ */
 
-html, body, [class*="css"] {
-    font-family: 'DM Sans', sans-serif;
+/* ── Root containers ───────────────────────────────────── */
+[data-testid="stAppViewContainer"],
+[data-testid="stAppViewContainer"] > section,
+.stMainBlockContainer,
+[data-testid="stMainBlockContainer"],
+.stApp {
+    background-color: #FAFAF7 !important;
+    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif !important;
+}
+
+/* ── Typography ────────────────────────────────────────── */
+html, body, [class*="css"],
+p, span, li, td, th, label, div,
+.stMarkdown, .stText {
+    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif !important;
 }
 
 h1 {
@@ -42,19 +58,31 @@ h2, h3 {
     color: #2D3E50 !important;
 }
 
+h4, h5, h6 {
+    font-weight: 600 !important;
+    color: #2D3E50 !important;
+}
+
+/* ── Metric cards ──────────────────────────────────────── */
 [data-testid="stMetric"] {
-    background: #FAFAF7;
-    border: 1px solid #E8E4DB;
-    border-radius: 8px;
-    padding: 12px 16px;
-    border-left: 3px solid #4A6FA5;
+    background: #FAFAF7 !important;
+    border: 1px solid #E8E4DB !important;
+    border-radius: 8px !important;
+    padding: 14px 18px !important;
+    border-left: 4px solid #4A6FA5 !important;
+    box-shadow: 0 1px 4px rgba(45, 62, 80, 0.06) !important;
+    transition: all 0.2s ease !important;
+}
+[data-testid="stMetric"]:hover {
+    box-shadow: 0 3px 12px rgba(74, 111, 165, 0.14) !important;
+    transform: translateY(-1px) !important;
 }
 
 [data-testid="stMetricLabel"] {
     font-size: 0.78rem !important;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: #7A7A72 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+    color: #636359 !important;
 }
 
 [data-testid="stMetricValue"] {
@@ -62,25 +90,27 @@ h2, h3 {
     color: #2D3E50 !important;
 }
 
-/* Sidebar — deep space background */
-[data-testid="stSidebar"] {
+[data-testid="stMetricDelta"] {
+    font-size: 0.82rem !important;
+}
+
+/* ── Sidebar — deep space gradient ─────────────────────── */
+[data-testid="stSidebar"],
+[data-testid="stSidebar"] > div:first-child {
     background: linear-gradient(180deg, #1C2A3A 0%, #2D3E50 100%) !important;
 }
 
-/* Sidebar nav links — bright and readable */
 [data-testid="stSidebar"] [data-testid="stSidebarNav"] span {
     color: #F0EDE6 !important;
     font-weight: 500 !important;
 }
 
-/* Sidebar headings */
 [data-testid="stSidebar"] h1,
 [data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] h3 {
     color: #F5F0E8 !important;
 }
 
-/* Sidebar body text, captions, markdown */
 [data-testid="stSidebar"] p,
 [data-testid="stSidebar"] span,
 [data-testid="stSidebar"] label,
@@ -88,135 +118,67 @@ h2, h3 {
     color: #D0C9BC !important;
 }
 
-/* Sidebar labels — slightly dimmer for hierarchy */
 [data-testid="stSidebar"] .stSelectbox label,
 [data-testid="stSidebar"] .stFileUploader label,
 [data-testid="stSidebar"] .stSubheader {
     color: #B0A99A !important;
     font-size: 0.82rem !important;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
+    text-transform: uppercase !important;
+    letter-spacing: 0.3px !important;
 }
 
-/* Sidebar dividers */
 [data-testid="stSidebar"] hr {
     border-color: rgba(240, 237, 230, 0.15) !important;
 }
 
-/* Sidebar success/warning/info — keep their own colors readable */
 [data-testid="stSidebar"] [data-testid="stAlert"] p {
     color: inherit !important;
 }
 
-.stSuccess {
+/* ── Alerts ────────────────────────────────────────────── */
+.stSuccess, [data-testid="stAlert"][data-baseweb*="positive"] {
     background-color: rgba(107, 143, 113, 0.08) !important;
     border-color: #6B8F71 !important;
 }
 
-.stWarning {
+.stWarning, [data-testid="stAlert"][data-baseweb*="warning"] {
     background-color: rgba(199, 139, 82, 0.08) !important;
     border-color: #C78B52 !important;
 }
 
-.stInfo {
+.stInfo, [data-testid="stAlert"][data-baseweb*="info"] {
     background-color: rgba(74, 111, 165, 0.08) !important;
     border-color: #4A6FA5 !important;
 }
 
+.stError, [data-testid="stAlert"][data-baseweb*="negative"] {
+    background-color: rgba(196, 92, 74, 0.08) !important;
+    border-color: #C45C4A !important;
+}
+
+/* ── Buttons ───────────────────────────────────────────── */
 .stButton > button[kind="primary"] {
     background-color: #4A6FA5 !important;
-    border: none !important;
+    color: #FFFFFF !important;
+    border: 1.5px solid #4A6FA5 !important;
     border-radius: 6px !important;
     font-weight: 500 !important;
-    letter-spacing: 0.3px;
-    transition: all 0.2s ease;
+    letter-spacing: 0.3px !important;
+    transition: all 0.2s ease !important;
 }
-
-/* primary hover is defined in the enhanced section below */
-
-.stButton > button[kind="secondary"] {
-    border: 1px solid #E8E4DB !important;
-    border-radius: 6px !important;
-    color: #7A7A72 !important;
-    background: transparent !important;
-}
-
-[data-testid="stDataFrame"] {
-    border: 1px solid #E8E4DB !important;
-    border-radius: 6px !important;
-}
-
-.stTabs [data-baseweb="tab-list"] {
-    gap: 0;
-    border-bottom: 2px solid #E8E4DB;
-}
-
-.stTabs [data-baseweb="tab"] {
-    border-radius: 6px 6px 0 0;
-    padding: 8px 20px;
-    font-weight: 500;
-}
-
-.streamlit-expanderHeader {
-    background: #FAFAF7 !important;
-    border-radius: 6px !important;
-    border: 1px solid #E8E4DB !important;
-}
-
-hr {
-    border-color: #E8E4DB !important;
-    opacity: 0.6;
-}
-
-[data-baseweb="select"] {
-    border-radius: 6px !important;
-}
-
-.js-plotly-plot {
-    border-radius: 8px;
-}
-
-::-webkit-scrollbar {
-    width: 6px;
-}
-::-webkit-scrollbar-thumb {
-    background: #C8C3B8;
-    border-radius: 3px;
-}
-::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-/* ── Enhanced Design — Ligne Claire Refinements ──── */
-
-/* Metric card hover — subtle lift */
-[data-testid="stMetric"] {
-    transition: all 0.2s ease;
-}
-[data-testid="stMetric"]:hover {
-    box-shadow: 0 2px 8px rgba(74, 111, 165, 0.12);
-    transform: translateY(-1px);
-}
-
-/* Data tables — dark header, alternating rows */
-[data-testid="stDataFrame"] thead tr th {
-    background: #2D3E50 !important;
-    color: #F0EDE6 !important;
-    font-weight: 500 !important;
-    text-transform: uppercase;
-    font-size: 0.78rem !important;
-    letter-spacing: 0.3px;
-}
-[data-testid="stDataFrame"] tbody tr:nth-child(even) {
-    background: #F5F0E8 !important;
-}
-
-/* Button hover — ligne claire color inversion */
 .stButton > button[kind="primary"]:hover {
     background-color: #FAFAF7 !important;
     color: #4A6FA5 !important;
     border: 1.5px solid #4A6FA5 !important;
     box-shadow: none !important;
+}
+
+.stButton > button[kind="secondary"] {
+    border: 1px solid #E8E4DB !important;
+    border-radius: 6px !important;
+    color: #636359 !important;
+    background: transparent !important;
+    transition: all 0.2s ease !important;
 }
 .stButton > button[kind="secondary"]:hover {
     background: #2D3E50 !important;
@@ -224,13 +186,77 @@ hr {
     border-color: #2D3E50 !important;
 }
 
-/* Form inputs — themed borders and focus ring */
+/* ── Data tables ───────────────────────────────────────── */
+[data-testid="stDataFrame"] {
+    border: 1px solid #E8E4DB !important;
+    border-radius: 6px !important;
+}
+[data-testid="stDataFrame"] thead tr th {
+    background: #2D3E50 !important;
+    color: #F0EDE6 !important;
+    font-weight: 500 !important;
+    text-transform: uppercase !important;
+    font-size: 0.78rem !important;
+    letter-spacing: 0.3px !important;
+}
+[data-testid="stDataFrame"] tbody tr:nth-child(even) {
+    background: #F5F0E8 !important;
+}
+[data-testid="stDataFrame"] tbody tr:hover {
+    background: #E8E4DB !important;
+}
+
+/* ── Tabs ──────────────────────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 0 !important;
+    border-bottom: 2px solid #E8E4DB !important;
+}
+.stTabs [data-baseweb="tab"] {
+    border-radius: 6px 6px 0 0 !important;
+    padding: 8px 20px !important;
+    font-weight: 500 !important;
+    color: #636359 !important;
+}
+.stTabs [data-baseweb="tab"][aria-selected="true"] {
+    border-bottom: 3px solid #4A6FA5 !important;
+    color: #2D3E50 !important;
+    font-weight: 600 !important;
+}
+
+/* ── Expanders ─────────────────────────────────────────── */
+[data-testid="stExpander"] {
+    border: 1px solid #E8E4DB !important;
+    border-radius: 8px !important;
+    overflow: hidden !important;
+}
+[data-testid="stExpander"] summary,
+.streamlit-expanderHeader {
+    background: #FAFAF7 !important;
+    font-weight: 500 !important;
+    color: #2D3E50 !important;
+    border-radius: 8px !important;
+    border: none !important;
+}
+[data-testid="stExpander"] summary:hover {
+    color: #4A6FA5 !important;
+}
+
+/* ── Horizontal rules ──────────────────────────────────── */
+hr {
+    border: none !important;
+    border-top: 1.5px solid #E8E4DB !important;
+    margin: 1.5rem 0 !important;
+    opacity: 1 !important;
+}
+
+/* ── Form inputs ───────────────────────────────────────── */
 [data-testid="stTextInput"] input,
 [data-testid="stNumberInput"] input,
 [data-testid="stTextArea"] textarea {
     border: 1px solid #E8E4DB !important;
     border-radius: 6px !important;
-    font-family: 'DM Sans', sans-serif !important;
+    font-family: 'DM Sans', -apple-system, sans-serif !important;
+    color: #2D3E50 !important;
 }
 [data-testid="stTextInput"] input:focus,
 [data-testid="stNumberInput"] input:focus,
@@ -239,14 +265,10 @@ hr {
     box-shadow: 0 0 0 1px #4A6FA5 !important;
 }
 
-/* Tab active state */
-.stTabs [data-baseweb="tab"][aria-selected="true"] {
-    border-bottom: 2px solid #4A6FA5 !important;
-    color: #2D3E50 !important;
-    font-weight: 600 !important;
+/* ── Selectbox / Multiselect ───────────────────────────── */
+[data-baseweb="select"] {
+    border-radius: 6px !important;
 }
-
-/* Selectbox and multiselect refinement */
 [data-baseweb="select"] > div {
     border-color: #E8E4DB !important;
 }
@@ -254,16 +276,57 @@ hr {
     border-color: #4A6FA5 !important;
     box-shadow: 0 0 0 1px #4A6FA5 !important;
 }
+[data-baseweb="menu"] li:hover {
+    background-color: #F0EDE6 !important;
+}
 
-/* Slider styling */
+/* ── Radio buttons ─────────────────────────────────────── */
+[data-testid="stRadio"] label[data-selected="true"] {
+    color: #4A6FA5 !important;
+    font-weight: 600 !important;
+}
+
+/* ── Slider ────────────────────────────────────────────── */
 [data-testid="stSlider"] [role="slider"] {
     background-color: #4A6FA5 !important;
 }
+[data-testid="stSlider"] [data-testid="stThumbValue"] {
+    color: #2D3E50 !important;
+    font-weight: 600 !important;
+}
 
-/* Error alert styling */
-.stError {
-    background-color: rgba(196, 92, 74, 0.08) !important;
-    border-color: #C45C4A !important;
+/* ── Plotly charts ─────────────────────────────────────── */
+.js-plotly-plot {
+    border-radius: 8px !important;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────── */
+::-webkit-scrollbar {
+    width: 6px !important;
+}
+::-webkit-scrollbar-thumb {
+    background: #C8C3B8 !important;
+    border-radius: 3px !important;
+}
+::-webkit-scrollbar-track {
+    background: transparent !important;
+}
+
+/* ── Caption text ──────────────────────────────────────── */
+[data-testid="stCaptionContainer"] {
+    color: #7A7A72 !important;
+    font-size: 0.82rem !important;
+}
+
+/* ── Date input ────────────────────────────────────────── */
+[data-testid="stDateInput"] input {
+    border: 1px solid #E8E4DB !important;
+    border-radius: 6px !important;
+    font-family: 'DM Sans', -apple-system, sans-serif !important;
+}
+[data-testid="stDateInput"] input:focus {
+    border-color: #4A6FA5 !important;
+    box-shadow: 0 0 0 1px #4A6FA5 !important;
 }
 
 </style>
@@ -279,7 +342,6 @@ hr {
         });
     });
     observer.observe(document.body, {childList: true, subtree: true});
-    // Also run immediately in case DOM is already loaded
     setTimeout(renameAppLabel, 500);
 })();
 </script>""")

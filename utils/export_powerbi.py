@@ -6,6 +6,7 @@ from io import BytesIO
 from datetime import datetime, timedelta
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.formatting.rule import CellIsRule
 from openpyxl.utils import get_column_letter
 
 from utils.calculations import calculate_baselines, aggregate_by_period
@@ -26,6 +27,12 @@ THIN_BORDER = Border(
 )
 COL_WIDTH_MIN = 8
 COL_WIDTH_MAX = 22
+CREAM_FILL = PatternFill(start_color="F5F0E8", end_color="F5F0E8", fill_type="solid")
+WHITE_FILL = PatternFill(start_color="FAFAF7", end_color="FAFAF7", fill_type="solid")
+ACCENT_FILL = PatternFill(start_color="4A6FA5", end_color="4A6FA5", fill_type="solid")
+ACCENT_FONT = Font(name="Calibri", bold=True, size=12, color="FFFFFF")
+GREEN_TINT = PatternFill(start_color="E8F0E9", end_color="E8F0E9", fill_type="solid")
+RED_TINT = PatternFill(start_color="F5E0DC", end_color="F5E0DC", fill_type="solid")
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +67,7 @@ def _write_sheet(ws, headers: list[str], rows: list[list], freeze: bool = True):
                 cell.value = value
             cell.font = DATA_FONT
             cell.border = THIN_BORDER
+            cell.fill = CREAM_FILL if (row_idx % 2 == 0) else WHITE_FILL
 
     # -- auto-width --------------------------------------------------------
     for col_idx in range(1, len(headers) + 1):
@@ -87,6 +95,24 @@ def _safe_round(value, decimals=4):
             return None
         return round(value, decimals)
     return value
+
+
+def _classify_performance_tier(roas_val, campaign_type):
+    """Classify ROAS into Above/At/Below Target."""
+    settings = load_settings()
+    if "retarg" in str(campaign_type).lower():
+        target = settings.get("roas_target_retargeting", 14)
+    else:
+        target = settings.get("roas_target_prospecting", 8)
+
+    if pd.isna(roas_val) or roas_val == 0:
+        return "No Data"
+    if roas_val >= target:
+        return "Above Target"
+    elif roas_val >= target * 0.8:
+        return "At Target"
+    else:
+        return "Below Target"
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +152,7 @@ def _sheet_fact_daily(wb: Workbook, filtered: pd.DataFrame):
     headers = [
         "date", "platform", "campaign_type",
         "spend", "impressions", "clicks", "conversions", "revenue",
-        "cpm", "ctr", "cvr", "aov", "roas", "cpa",
+        "cpm", "ctr", "cvr", "aov", "roas", "cpa", "performance_tier",
     ]
 
     if filtered.empty:
@@ -153,9 +179,25 @@ def _sheet_fact_daily(wb: Workbook, filtered: pd.DataFrame):
             _safe_round(r["aov"]),
             _safe_round(r["roas"]),
             _safe_round(r["cpa"]),
+            _classify_performance_tier(r["roas"], r["campaign_type"]),
         ])
 
     _write_sheet(ws, headers, rows)
+
+    # Conditional formatting on performance_tier column
+    tier_col = get_column_letter(len(headers))
+    num_rows = len(rows) + 1  # +1 for header
+    ws.conditional_formatting.add(
+        f"{tier_col}2:{tier_col}{num_rows}",
+        CellIsRule(operator="equal", formula=['"Above Target"'], fill=GREEN_TINT),
+    )
+    ws.conditional_formatting.add(
+        f"{tier_col}2:{tier_col}{num_rows}",
+        CellIsRule(operator="equal", formula=['"Below Target"'], fill=RED_TINT),
+    )
+
+    # Tab color for fact table
+    ws.sheet_properties.tabColor = "4A6FA5"
 
 
 def _sheet_fact_weekly(wb: Workbook, filtered: pd.DataFrame):
@@ -165,7 +207,7 @@ def _sheet_fact_weekly(wb: Workbook, filtered: pd.DataFrame):
     headers = [
         "week_start", "week_label", "platform", "campaign_type",
         "spend", "revenue", "impressions", "clicks", "conversions",
-        "roas", "cpm", "ctr", "cvr", "aov",
+        "roas", "cpm", "ctr", "cvr", "aov", "performance_tier",
     ]
 
     if filtered.empty:
@@ -198,9 +240,25 @@ def _sheet_fact_weekly(wb: Workbook, filtered: pd.DataFrame):
             _safe_round(r["ctr"]),
             _safe_round(r["cvr"]),
             _safe_round(r["aov"]),
+            _classify_performance_tier(r["roas"], r["campaign_type"]),
         ])
 
     _write_sheet(ws, headers, rows)
+
+    # Conditional formatting on performance_tier column
+    tier_col = get_column_letter(len(headers))
+    num_rows = len(rows) + 1
+    ws.conditional_formatting.add(
+        f"{tier_col}2:{tier_col}{num_rows}",
+        CellIsRule(operator="equal", formula=['"Above Target"'], fill=GREEN_TINT),
+    )
+    ws.conditional_formatting.add(
+        f"{tier_col}2:{tier_col}{num_rows}",
+        CellIsRule(operator="equal", formula=['"Below Target"'], fill=RED_TINT),
+    )
+
+    # Tab color for fact table
+    ws.sheet_properties.tabColor = "4A6FA5"
 
 
 def _sheet_fact_monthly(wb: Workbook, filtered: pd.DataFrame):
@@ -210,7 +268,7 @@ def _sheet_fact_monthly(wb: Workbook, filtered: pd.DataFrame):
     headers = [
         "month", "platform", "campaign_type",
         "spend", "revenue", "impressions", "clicks", "conversions",
-        "roas", "cpm", "ctr", "cvr", "aov",
+        "roas", "cpm", "ctr", "cvr", "aov", "performance_tier",
     ]
 
     if filtered.empty:
@@ -239,9 +297,25 @@ def _sheet_fact_monthly(wb: Workbook, filtered: pd.DataFrame):
             _safe_round(r["ctr"]),
             _safe_round(r["cvr"]),
             _safe_round(r["aov"]),
+            _classify_performance_tier(r["roas"], r["campaign_type"]),
         ])
 
     _write_sheet(ws, headers, rows)
+
+    # Conditional formatting on performance_tier column
+    tier_col = get_column_letter(len(headers))
+    num_rows = len(rows) + 1
+    ws.conditional_formatting.add(
+        f"{tier_col}2:{tier_col}{num_rows}",
+        CellIsRule(operator="equal", formula=['"Above Target"'], fill=GREEN_TINT),
+    )
+    ws.conditional_formatting.add(
+        f"{tier_col}2:{tier_col}{num_rows}",
+        CellIsRule(operator="equal", formula=['"Below Target"'], fill=RED_TINT),
+    )
+
+    # Tab color for fact table
+    ws.sheet_properties.tabColor = "4A6FA5"
 
 
 def _sheet_dim_platform(wb: Workbook, filtered: pd.DataFrame):
@@ -263,6 +337,9 @@ def _sheet_dim_platform(wb: Workbook, filtered: pd.DataFrame):
 
     _write_sheet(ws, headers, rows)
 
+    # Tab color for dimension table
+    ws.sheet_properties.tabColor = "6B8F71"
+
 
 def _sheet_dim_campaign_type(wb: Workbook):
     """Sheet 5 -- dim_campaign_type: campaign type dimension with ROAS targets."""
@@ -275,6 +352,9 @@ def _sheet_dim_campaign_type(wb: Workbook):
     ]
 
     _write_sheet(ws, headers, rows)
+
+    # Tab color for dimension table
+    ws.sheet_properties.tabColor = "6B8F71"
 
 
 def _sheet_dim_date(wb: Workbook, filtered: pd.DataFrame):
@@ -310,6 +390,9 @@ def _sheet_dim_date(wb: Workbook, filtered: pd.DataFrame):
         ])
 
     _write_sheet(ws, headers, rows)
+
+    # Tab color for dimension table
+    ws.sheet_properties.tabColor = "6B8F71"
 
 
 def _sheet_dim_baselines(wb: Workbook, filtered: pd.DataFrame):
@@ -349,6 +432,9 @@ def _sheet_dim_baselines(wb: Workbook, filtered: pd.DataFrame):
             ])
 
     _write_sheet(ws, headers, rows)
+
+    # Tab color for dimension table
+    ws.sheet_properties.tabColor = "6B8F71"
 
 
 def _sheet_fact_forecast(wb: Workbook, filtered: pd.DataFrame):
@@ -422,6 +508,9 @@ def _sheet_fact_forecast(wb: Workbook, filtered: pd.DataFrame):
 
     _write_sheet(ws, headers, rows)
 
+    # Tab color for fact table
+    ws.sheet_properties.tabColor = "4A6FA5"
+
 
 def _sheet_meta_info(wb: Workbook, filtered: pd.DataFrame, start_date, end_date, platforms):
     """Sheet 9 -- meta_info: generation metadata and relationship map."""
@@ -431,6 +520,15 @@ def _sheet_meta_info(wb: Workbook, filtered: pd.DataFrame, start_date, end_date,
     label_font = Font(name="Calibri", bold=True, size=11, color="2D3E50")
     value_font = Font(name="Calibri", size=10)
 
+    def _section_header(row_num: int, title: str):
+        """Write a styled section header spanning columns A-B."""
+        for col in (1, 2):
+            cell = ws.cell(row=row_num, column=col)
+            cell.fill = ACCENT_FILL
+            cell.font = ACCENT_FONT
+            cell.border = THIN_BORDER
+        ws.cell(row=row_num, column=1, value=title)
+
     def _meta_row(row_num: int, label: str, value):
         cell_l = ws.cell(row=row_num, column=1, value=label)
         cell_l.font = label_font
@@ -439,8 +537,12 @@ def _sheet_meta_info(wb: Workbook, filtered: pd.DataFrame, start_date, end_date,
         cell_v.font = value_font
         cell_v.border = THIN_BORDER
 
-    # Basic metadata
-    _meta_row(1, "Generated", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    # -- GENERATION INFO section -------------------------------------------
+    row_num = 1
+    _section_header(row_num, "GENERATION INFO")
+
+    row_num = 2
+    _meta_row(row_num, "Generated", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     if not filtered.empty:
         d_min = filtered["date"].min().strftime("%Y-%m-%d")
@@ -448,21 +550,19 @@ def _sheet_meta_info(wb: Workbook, filtered: pd.DataFrame, start_date, end_date,
         date_range = f"{d_min} \u2014 {d_max}"
     else:
         date_range = "No data"
-    _meta_row(2, "Date Range", date_range)
+    row_num = 3
+    _meta_row(row_num, "Date Range", date_range)
 
     plat_list = ", ".join(sorted(filtered["platform"].unique())) if not filtered.empty else ""
-    _meta_row(3, "Platforms", plat_list)
+    row_num = 4
+    _meta_row(row_num, "Platforms", plat_list)
 
-    _meta_row(4, "Total Rows", len(filtered))
+    row_num = 5
+    _meta_row(row_num, "Total Rows", len(filtered))
 
-    # Relationship map
-    row_num = 6
-    header_cell = ws.cell(row=row_num, column=1, value="Relationships")
-    header_cell.font = HEADER_FONT
-    header_cell.fill = HEADER_FILL
-    header_cell.border = THIN_BORDER
-    ws.cell(row=row_num, column=2).fill = HEADER_FILL
-    ws.cell(row=row_num, column=2).border = THIN_BORDER
+    # -- RELATIONSHIPS section ---------------------------------------------
+    row_num = 7
+    _section_header(row_num, "RELATIONSHIPS")
 
     relationships = [
         ("fact_daily.date", "dim_date.date"),
@@ -479,9 +579,44 @@ def _sheet_meta_info(wb: Workbook, filtered: pd.DataFrame, start_date, end_date,
         c2.font = value_font
         c2.border = THIN_BORDER
 
+    # -- DATA QUALITY section ----------------------------------------------
+    row_num += 2
+    _section_header(row_num, "DATA QUALITY")
+
+    if not filtered.empty:
+        min_date = filtered["date"].min().normalize()
+        max_date = filtered["date"].max().normalize()
+        total_possible_days = (max_date - min_date).days + 1
+        actual_unique_dates = filtered["date"].dt.normalize().nunique()
+        date_completeness = (
+            round(actual_unique_dates / total_possible_days * 100, 2)
+            if total_possible_days > 0
+            else 0
+        )
+        null_revenue_rows = int(filtered["revenue"].isna().sum())
+        null_spend_rows = int(filtered["spend"].isna().sum())
+        total_rows_processed = len(filtered)
+    else:
+        date_completeness = 0
+        null_revenue_rows = 0
+        null_spend_rows = 0
+        total_rows_processed = 0
+
+    row_num += 1
+    _meta_row(row_num, "Date Completeness (%)", date_completeness)
+    row_num += 1
+    _meta_row(row_num, "Null Revenue Rows", null_revenue_rows)
+    row_num += 1
+    _meta_row(row_num, "Null Spend Rows", null_spend_rows)
+    row_num += 1
+    _meta_row(row_num, "Total Rows Processed", total_rows_processed)
+
     # Column widths
     ws.column_dimensions["A"].width = 38
     ws.column_dimensions["B"].width = 42
+
+    # Tab color for meta sheet
+    ws.sheet_properties.tabColor = "C78B52"
 
 
 # ---------------------------------------------------------------------------

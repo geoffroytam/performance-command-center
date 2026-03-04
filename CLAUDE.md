@@ -306,3 +306,111 @@ This is more accurate than averaging daily ratios because it properly weights hi
 - Count columns (impressions, clicks, conversions) should be `int` type
 - BRL formatting: strip `R$`, replace comma decimal separator with period
 - Tracker format detection: check for signature columns `{"Campaign Type", "Day", "Amount spent (BRL)", "Purchases conversion value"}`
+
+---
+
+## 7. Excel Export Expert Agent
+
+**Activation:** Any changes to `utils/export_excel.py`, new Excel features, chart additions, formatting changes, or data export modifications.
+
+### Responsibilities
+- Maintain the 5-sheet structure: Executive Summary, Daily Data, Weekly Trends, Monthly Summary, Baselines
+- Ensure all number formats use Excel-native format strings (not Python string formatting)
+- CTR/CVR must be converted from percentage to decimal for Excel `0.00%` format
+- All charts must use the Objectif Lune color palette (blue `#4A6FA5`, green `#6B8F71`, red `#C45C4A`, orange `#C78B52`)
+- Conditional formatting: ROAS green/red vs campaign-type targets, data bars on spend/revenue columns
+- Alternating row fills: cream (`#F5F0E8`) / white (`#FAFAF7`)
+- Headers: dark_blue (`#2D3E50`) fill, white text, Calibri 11pt bold
+- Orange accent bar on Executive Summary header area
+
+### Key Dependencies
+- `openpyxl`: Workbook, styles, charts (`BarChart`, `LineChart`, `Reference`), conditional formatting (`DataBarRule`)
+- `utils/calculations.py`: `calculate_baselines`, `aggregate_by_period`
+- `utils/constants.py`: `COLORS`, `ROAS_TARGETS`, `PLATFORM_COLORS`
+
+### Quality Checks
+- All currency values use `R$ #,##0` format
+- All percentage values use `0.00%` format (Excel native)
+- Column widths bounded: min 8, max 22
+- Auto-filter enabled on all data sheets
+- Freeze panes at A2 on data sheets
+- Charts render correctly in both Excel and Google Sheets
+
+---
+
+## 8. PowerPoint Export Expert Agent
+
+**Activation:** Any changes to `utils/export_pptx.py`, new slide types, chart additions, or presentation design changes.
+
+### Responsibilities
+- Maintain slide architecture: Title, Executive Summary, Section Dividers, Platform Breakdown, Charts, Per-Platform Details, Key Takeaways, Recommendations, Closing
+- All slides use blank layout (index 6) with manually positioned shapes for full visual control
+- Dark slides: `DARK_BG` (`#2D3E50`) background with white/gray text
+- Content slides: `WHITE` background with `BODY_TEXT` (`#403833`) text
+- KPI cards: cream fill, orange accent strip, centered layout with delta badges
+- Tables: dark header, alternating cream/white rows, thin borders via lxml XML manipulation
+- Section dividers: vertical orange accent line on left side
+
+### Fonts
+- Titles: Utopia Std Display (Georgia fallback), bold
+- Body: Acumin Pro (Calibri fallback)
+- KPI values: 22-24pt bold, labels 9pt uppercase
+
+### Chart Requirements
+- Bar charts: platform spend comparison with BLUE/GREEN series colors
+- Line charts: ROAS trend with smoothed lines, BLUE color, Pt(2.5) width
+- All charts positioned within `MARGIN_LEFT` / `CONTENT_W` bounds
+- Legend at bottom, font matches body style
+- Use `CategoryChartData` for all chart data
+
+### Key Dependencies
+- `python-pptx`: `Presentation`, shapes, charts, text formatting
+- `lxml.etree`: table cell border XML manipulation
+- `utils/constants.py`: `COLORS`, `PLATFORM_COLORS`, `ROAS_TARGETS`
+
+### Quality Checks
+- All slides have consistent margins (`MARGIN_LEFT`, `MARGIN_TOP`)
+- Footer appears on every slide
+- No text overflow (wrap within shape bounds)
+- Chart series colors match brand palette
+- Presentation renders in PowerPoint, Keynote, and Google Slides
+
+---
+
+## 9. Power BI Export Expert Agent
+
+**Activation:** Any changes to `utils/export_powerbi.py`, new dimension/fact tables, schema changes, or data model modifications.
+
+### Responsibilities
+- Maintain star schema: `fact_daily`, `fact_weekly`, `fact_monthly` as fact tables; `dim_date`, `dim_platform`, `dim_campaign_type`, `dim_baselines` as dimensions
+- `fact_forecast` bridges forecast vs actuals
+- `meta_info` provides join-key reference, data quality indicators, and relationship documentation
+- All values use `_safe_round()` to handle NaN gracefully
+- Date format: `YYYY-MM-DD` for Power BI compatibility
+- Alternating row fills (cream/white) for visual polish
+- `performance_tier` column: "Above Target" / "At Target" / "Below Target"
+
+### Schema Rules
+- Fact tables: date/period + platform + campaign_type as composite key
+- Dimension tables: single-column primary key
+- All KPIs computed as weighted ratios (`sum/sum`), never averaged
+- ROAS tier classification uses campaign-type-specific targets from settings
+
+### Styling
+- Tab colors: blue (`#4A6FA5`) for facts, green (`#6B8F71`) for dimensions, orange (`#C78B52`) for meta
+- Header fills: dark_blue with white text
+- Conditional formatting: green tint for "Above Target", red tint for "Below Target"
+- meta_info: section headers with accent fills, data quality indicators
+
+### Key Dependencies
+- `openpyxl`: Workbook, styles, conditional formatting (`CellIsRule`)
+- `utils/calculations.py`: `calculate_baselines`
+- `utils/forecasting.py`: `load_forecast_log`
+- `utils/constants.py`: `ROAS_TARGETS`, `load_settings`
+
+### Quality Checks
+- All sheets have auto-filter and frozen panes
+- No NaN values in output (replaced with None/blank)
+- Date dimension spans full min-max range without gaps
+- Row counts match between fact tables and source data
+- Performance tier values are valid enum strings only

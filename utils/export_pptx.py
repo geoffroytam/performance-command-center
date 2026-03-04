@@ -19,6 +19,8 @@ from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.enum.shapes import MSO_SHAPE
+from pptx.chart.data import CategoryChartData
+from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
 from lxml import etree
 
 from utils.calculations import (
@@ -771,6 +773,15 @@ def _build_section_divider(prs, title, subtitle=""):
             bold=False, alignment=PP_ALIGN.CENTER,
         )
 
+    # Vertical orange accent line on the left side
+    left_accent = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        Inches(0.3), Inches(2.0), Pt(3), Inches(3.0),
+    )
+    left_accent.fill.solid()
+    left_accent.fill.fore_color.rgb = ACCENT_ORANGE
+    left_accent.line.fill.background()
+
     return slide
 
 
@@ -1113,6 +1124,152 @@ def _build_closing_slide(prs):
     return slide
 
 
+# -- 8. Platform Spend Chart Slide --------------------------------------
+
+def _build_platform_spend_chart_slide(prs, filtered):
+    """Platform spend & revenue comparison bar chart."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank layout
+    _fill_slide_background(slide, WHITE)
+    _add_slide_title(slide, "Spend Distribution")
+    _add_subtitle_line(slide, "Platform comparison — spend vs. revenue")
+    _add_accent_rule(slide, Inches(1.55))
+
+    plat_summary = filtered.groupby("platform").agg(
+        spend=("spend", "sum"),
+        revenue=("revenue", "sum"),
+    ).reset_index().sort_values("spend", ascending=False)
+
+    chart_data = CategoryChartData()
+    chart_data.categories = plat_summary["platform"].tolist()
+    chart_data.add_series("Spend", [float(v) for v in plat_summary["spend"]])
+    chart_data.add_series("Revenue", [float(v) for v in plat_summary["revenue"]])
+
+    chart_frame = slide.shapes.add_chart(
+        XL_CHART_TYPE.COLUMN_CLUSTERED,
+        MARGIN_LEFT, Inches(2.0), CONTENT_W, Inches(4.5),
+        chart_data,
+    )
+    chart = chart_frame.chart
+    chart.has_legend = True
+    chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+    chart.legend.include_in_layout = False
+
+    plot = chart.plots[0]
+    series_spend = plot.series[0]
+    series_spend.format.fill.solid()
+    series_spend.format.fill.fore_color.rgb = RGBColor(0x4A, 0x6F, 0xA5)
+    series_rev = plot.series[1]
+    series_rev.format.fill.solid()
+    series_rev.format.fill.fore_color.rgb = RGBColor(0x6B, 0x8F, 0x71)
+
+    _add_footer(slide)
+    return slide
+
+
+# -- 9. Performance Trend Slide -----------------------------------------
+
+def _build_performance_trend_slide(prs, filtered):
+    """ROAS trend line chart over time."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _fill_slide_background(slide, WHITE)
+    _add_slide_title(slide, "Performance Trend")
+    _add_subtitle_line(slide, "Daily ROAS trajectory")
+    _add_accent_rule(slide, Inches(1.55))
+
+    daily = filtered.groupby("date").agg(
+        spend=("spend", "sum"),
+        revenue=("revenue", "sum"),
+    ).reset_index().sort_values("date")
+    daily["roas"] = np.where(daily["spend"] > 0, daily["revenue"] / daily["spend"], 0)
+
+    if len(daily) > 30:
+        daily = daily.tail(30)
+
+    if daily.empty:
+        _add_footer(slide)
+        return slide
+
+    chart_data = CategoryChartData()
+    chart_data.categories = [d.strftime("%d/%m") for d in daily["date"]]
+    chart_data.add_series("ROAS", [round(float(r), 1) for r in daily["roas"]])
+
+    chart_frame = slide.shapes.add_chart(
+        XL_CHART_TYPE.LINE,
+        MARGIN_LEFT, Inches(2.0), CONTENT_W, Inches(4.5),
+        chart_data,
+    )
+    chart = chart_frame.chart
+    chart.has_legend = True
+    chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+
+    series = chart.plots[0].series[0]
+    series.format.line.color.rgb = RGBColor(0x4A, 0x6F, 0xA5)
+    series.format.line.width = Pt(2.5)
+    series.smooth = True
+
+    _add_footer(slide)
+    return slide
+
+
+# -- 10. Recommendations Slide ------------------------------------------
+
+def _build_recommendations_slide(prs, filtered):
+    """Recommended actions slide with numbered cards."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _fill_slide_background(slide, WHITE)
+    _add_slide_title(slide, "Recommended Actions")
+    _add_subtitle_line(slide, "Data-driven next steps")
+    _add_accent_rule(slide, Inches(1.55))
+
+    bullets = _generate_takeaways(filtered)
+    action_items = bullets[-4:] if len(bullets) >= 4 else bullets
+
+    card_top = Inches(2.2)
+    card_h = Inches(1.0)
+    card_gap = Inches(0.15)
+
+    for i, bullet_text in enumerate(action_items[:4]):
+        y = card_top + i * (card_h + card_gap)
+
+        # Card background
+        card = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            MARGIN_LEFT, y, CONTENT_W, card_h,
+        )
+        card.fill.solid()
+        card.fill.fore_color.rgb = CREAM
+        card.line.color.rgb = RGBColor(0xE0, 0xDC, 0xD5)
+        card.line.width = Pt(0.75)
+
+        # Number badge
+        badge = slide.shapes.add_shape(
+            MSO_SHAPE.OVAL,
+            MARGIN_LEFT + Inches(0.2), y + Inches(0.25),
+            Inches(0.5), Inches(0.5),
+        )
+        badge.fill.solid()
+        badge.fill.fore_color.rgb = ACCENT_ORANGE
+        badge.line.fill.background()
+        tf_badge = badge.text_frame
+        tf_badge.paragraphs[0].text = str(i + 1)
+        tf_badge.paragraphs[0].font.color.rgb = WHITE
+        tf_badge.paragraphs[0].font.size = Pt(16)
+        tf_badge.paragraphs[0].font.bold = True
+        tf_badge.paragraphs[0].alignment = PP_ALIGN.CENTER
+        tf_badge.word_wrap = False
+
+        # Text
+        _add_textbox(
+            slide, MARGIN_LEFT + Inches(0.9), y + Inches(0.15),
+            CONTENT_W - Inches(1.2), card_h - Inches(0.3),
+            bullet_text,
+            font_size=Pt(11), font_color=BODY_TEXT,
+        )
+
+    _add_footer(slide)
+    return slide
+
+
 # =====================================================================
 #  PUBLIC API
 # =====================================================================
@@ -1195,6 +1352,12 @@ def generate_pptx_report(
     # 4. Platform Breakdown Table
     _build_platform_table_slide(prs, filtered)
 
+    # 4b. Platform Spend Chart
+    _build_platform_spend_chart_slide(prs, filtered)
+
+    # 4c. Performance Trend
+    _build_performance_trend_slide(prs, filtered)
+
     # 5. Per-Platform Detail Slides
     for platform in sorted(filtered["platform"].unique()):
         _build_platform_detail_slide(
@@ -1208,6 +1371,9 @@ def generate_pptx_report(
 
     # 7. Key Takeaways
     _build_takeaways_slide(prs, filtered)
+
+    # 7b. Recommended Actions
+    _build_recommendations_slide(prs, filtered)
 
     # 8. Closing Slide
     _build_closing_slide(prs)
