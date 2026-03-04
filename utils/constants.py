@@ -43,6 +43,14 @@ NON_PREMIUM_KEYWORDS = ["non-premium", "standard", "regular"]
 PLATFORMS = ["Meta", "TikTok", "YouTube", "Pinterest"]
 PINTEREST_ALWAYS_PROSPECTING = True
 
+# ── KPI Driver Types (for confidence bands) ─────────────────
+KPI_DRIVER_TYPE = {
+    "cpm": "market",     # Auction-driven, strong predictor
+    "ctr": "account",    # Creative/audience-driven, wider confidence bands
+    "cvr": "account",    # Landing page/audience-driven, wider confidence bands
+    "aov": "product",    # Product/pricing-driven, strong unless pricing changed
+}
+
 # ── Column Mappings per Platform ──────────────────────────────
 # "Meta Tracker" is for pre-processed Excel tracker CSVs (already has Campaign Type, etc.)
 TRACKER_COLUMN_MAP = {
@@ -199,6 +207,13 @@ DEFAULT_SETTINGS = {
     "currency": "BRL",
     "date_format": "DD/MM/YYYY",
     "language": "en",
+    # Forecasting settings
+    "forecast_year_weights": {"2025": 0.6, "2024": 0.4},
+    "forecast_confidence_bands": {"1_month": 10, "2_months": 20, "3_months": 30},
+    "forecast_stressed_roas_threshold": 6.0,
+    "forecast_spend_warning_threshold": 20,
+    "forecast_promotional_anomalies": [],
+    "forecast_method": "both",
 }
 
 

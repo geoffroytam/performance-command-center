@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import json
 
 from utils.calculations import calculate_baselines
-from utils.constants import ROAS_TARGETS, load_settings, DATA_DIR
+from utils.constants import ROAS_TARGETS, KPI_DRIVER_TYPE, load_settings, DATA_DIR
 
 FORECAST_LOG_FILE = DATA_DIR / "forecast_log.json"
 
@@ -159,29 +159,55 @@ def compute_monthly_kpis(df: pd.DataFrame) -> pd.DataFrame:
     return agg.sort_values(["platform", "campaign_type", "year", "month"])
 
 
-def compute_mom_trends(monthly_kpis: pd.DataFrame) -> pd.DataFrame:
+def compute_mom_trends(
+    monthly_kpis: pd.DataFrame,
+    year_weights: dict = None,
+    exclude_months: list = None,
+) -> pd.DataFrame:
     """Compute month-over-month trends for each KPI by platform/campaign_type.
 
     For each consecutive pair of months (e.g., Feb → Mar) across all years,
     compute the percentage change in CPM, CTR, CVR, AOV.
 
+    Parameters
+    ----------
+    monthly_kpis : pd.DataFrame
+        Output of compute_monthly_kpis()
+    year_weights : dict, optional
+        Mapping of year (str or int) → weight, e.g. {"2025": 0.6, "2024": 0.4}.
+        When provided, uses weighted average instead of simple mean.
+        If None, falls back to simple mean (backward compatible).
+    exclude_months : list, optional
+        List of dicts with "year" and "month" keys to exclude from trend
+        calculations (e.g. promotional anomalies).
+
     Returns a DataFrame with:
         from_month, to_month, platform, campaign_type,
         cpm_pct_change, ctr_pct_change, cvr_pct_change, aov_pct_change
-    Averaged across all years of data available.
+    Averaged (optionally weighted) across all years of data available.
     """
     kpi_cols = ["cpm", "ctr", "cvr", "aov"]
     trend_rows = []
+
+    # Build a set of (year, month) tuples to exclude
+    excluded_set = set()
+    if exclude_months:
+        for ex in exclude_months:
+            excluded_set.add((int(ex.get("year", 0)), int(ex.get("month", 0))))
 
     for (platform, ctype), group in monthly_kpis.groupby(["platform", "campaign_type"]):
         group = group.sort_values(["year", "month"])
 
         for _, row in group.iterrows():
-            curr_year = row["year"]
-            curr_month = row["month"]
-            # Find the next month in the same year, or Jan of next year
+            curr_year = int(row["year"])
+            curr_month = int(row["month"])
+
+            # Skip if either the source or destination month is excluded
             next_month = curr_month + 1 if curr_month < 12 else 1
             next_year = curr_year if curr_month < 12 else curr_year + 1
+
+            if (curr_year, curr_month) in excluded_set or (next_year, next_month) in excluded_set:
+                continue
 
             next_row = group[
                 (group["year"] == next_year) & (group["month"] == next_month)
@@ -213,19 +239,54 @@ def compute_mom_trends(monthly_kpis: pd.DataFrame) -> pd.DataFrame:
 
     trends_df = pd.DataFrame(trend_rows)
 
-    # Average across all years for each from_month → to_month transition
-    avg_trends = (
-        trends_df
-        .groupby(["from_month", "to_month", "platform", "campaign_type"])
-        .agg(
-            cpm_pct_change=("cpm_pct_change", "mean"),
-            ctr_pct_change=("ctr_pct_change", "mean"),
-            cvr_pct_change=("cvr_pct_change", "mean"),
-            aov_pct_change=("aov_pct_change", "mean"),
-            n_years=("year", "count"),
+    # Normalise year_weights keys to int for matching
+    norm_weights = {}
+    if year_weights:
+        for k, v in year_weights.items():
+            norm_weights[int(k)] = float(v)
+
+    if norm_weights:
+        # Weighted average: join weights, compute weighted mean
+        trends_df["weight"] = trends_df["year"].map(norm_weights).fillna(0)
+
+        def _weighted_mean(series, weights):
+            """Weighted mean ignoring NaN values."""
+            mask = series.notna()
+            if mask.sum() == 0 or weights[mask].sum() == 0:
+                return np.nan
+            return np.average(series[mask], weights=weights[mask])
+
+        avg_rows = []
+        for keys, grp in trends_df.groupby(
+            ["from_month", "to_month", "platform", "campaign_type"]
+        ):
+            row_dict = {
+                "from_month": keys[0],
+                "to_month": keys[1],
+                "platform": keys[2],
+                "campaign_type": keys[3],
+            }
+            for kpi in kpi_cols:
+                col = f"{kpi}_pct_change"
+                row_dict[col] = _weighted_mean(grp[col], grp["weight"])
+            row_dict["n_years"] = len(grp)
+            avg_rows.append(row_dict)
+
+        avg_trends = pd.DataFrame(avg_rows)
+    else:
+        # Simple mean (backward compatible)
+        avg_trends = (
+            trends_df
+            .groupby(["from_month", "to_month", "platform", "campaign_type"])
+            .agg(
+                cpm_pct_change=("cpm_pct_change", "mean"),
+                ctr_pct_change=("ctr_pct_change", "mean"),
+                cvr_pct_change=("cvr_pct_change", "mean"),
+                aov_pct_change=("aov_pct_change", "mean"),
+                n_years=("year", "count"),
+            )
+            .reset_index()
         )
-        .reset_index()
-    )
 
     return avg_trends
 
@@ -352,6 +413,378 @@ def get_historical_month_summary(
         })
 
     return sorted(results, key=lambda x: x["year"])
+
+
+def compute_seasonal_indices(
+    monthly_kpis: pd.DataFrame,
+    platform: str,
+    campaign_type: str,
+    year_weights: dict = None,
+    exclude_months: list = None,
+) -> pd.DataFrame:
+    """Compute seasonal indices for each KPI per month using Method B.
+
+    Seasonal index = month_KPI / annual_average_KPI for that year.
+    When year_weights are provided, the final index is a weighted average
+    across years. Promotional anomaly months are excluded.
+
+    Parameters
+    ----------
+    monthly_kpis : pd.DataFrame
+        Output of compute_monthly_kpis()
+    platform, campaign_type : str
+        Filter for the specific slice
+    year_weights : dict, optional
+        e.g. {"2025": 0.6, "2024": 0.4}
+    exclude_months : list, optional
+        List of dicts with "year" and "month" keys to exclude
+
+    Returns
+    -------
+    pd.DataFrame with columns: month (1-12), cpm_index, ctr_index, cvr_index, aov_index
+    """
+    kpi_cols = ["cpm", "ctr", "cvr", "aov"]
+    slice_df = monthly_kpis[
+        (monthly_kpis["platform"] == platform)
+        & (monthly_kpis["campaign_type"] == campaign_type)
+    ].copy()
+
+    if slice_df.empty:
+        return pd.DataFrame(columns=["month"] + [f"{k}_index" for k in kpi_cols])
+
+    # Build excluded set
+    excluded_set = set()
+    if exclude_months:
+        for ex in exclude_months:
+            excluded_set.add((int(ex.get("year", 0)), int(ex.get("month", 0))))
+
+    # Filter out excluded months
+    if excluded_set:
+        mask = slice_df.apply(
+            lambda r: (int(r["year"]), int(r["month"])) not in excluded_set, axis=1
+        )
+        slice_df = slice_df[mask]
+
+    if slice_df.empty:
+        return pd.DataFrame(columns=["month"] + [f"{k}_index" for k in kpi_cols])
+
+    # Normalise year_weights keys
+    norm_weights = {}
+    if year_weights:
+        for k, v in year_weights.items():
+            norm_weights[int(k)] = float(v)
+
+    # Compute per-year seasonal indices
+    yearly_indices = []
+    for year, yr_grp in slice_df.groupby("year"):
+        year_int = int(year)
+        if yr_grp.shape[0] < 3:
+            # Need at least 3 months to compute meaningful seasonal indices
+            continue
+
+        annual_avgs = {}
+        for kpi in kpi_cols:
+            vals = yr_grp[kpi].dropna()
+            annual_avgs[kpi] = vals.mean() if len(vals) > 0 else np.nan
+
+        for _, row in yr_grp.iterrows():
+            month_idx = {}
+            for kpi in kpi_cols:
+                if pd.notna(annual_avgs[kpi]) and annual_avgs[kpi] != 0 and pd.notna(row[kpi]):
+                    month_idx[f"{kpi}_index"] = row[kpi] / annual_avgs[kpi]
+                else:
+                    month_idx[f"{kpi}_index"] = np.nan
+
+            yearly_indices.append({
+                "year": year_int,
+                "month": int(row["month"]),
+                "weight": norm_weights.get(year_int, 1.0),
+                **month_idx,
+            })
+
+    if not yearly_indices:
+        return pd.DataFrame(columns=["month"] + [f"{k}_index" for k in kpi_cols])
+
+    idx_df = pd.DataFrame(yearly_indices)
+
+    # Aggregate across years (weighted or simple)
+    def _weighted_mean_safe(series, weights):
+        mask = series.notna()
+        if mask.sum() == 0:
+            return np.nan
+        w = weights[mask]
+        if w.sum() == 0:
+            return series[mask].mean()
+        return np.average(series[mask], weights=w)
+
+    result_rows = []
+    for month, m_grp in idx_df.groupby("month"):
+        row = {"month": int(month)}
+        for kpi in kpi_cols:
+            col = f"{kpi}_index"
+            if norm_weights:
+                row[col] = _weighted_mean_safe(m_grp[col], m_grp["weight"])
+            else:
+                row[col] = m_grp[col].mean()
+        result_rows.append(row)
+
+    return pd.DataFrame(result_rows).sort_values("month").reset_index(drop=True)
+
+
+def project_baselines_seasonal(
+    df: pd.DataFrame,
+    target_month: int,
+    target_year: int,
+    platform: str,
+    campaign_type: str,
+    seasonal_indices: pd.DataFrame,
+    trailing_days: int = 90,
+) -> dict:
+    """Project baselines for a target month using Method B (Seasonal Index).
+
+    Uses a trailing N-day weighted average as the reference baseline,
+    then multiplies by the seasonal index for the target month.
+    Each month is projected independently — no chaining or compounding.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Raw daily data
+    target_month : int
+        Month (1-12) to project
+    target_year : int
+        Year of the target month
+    platform, campaign_type : str
+        Filter for the specific slice
+    seasonal_indices : pd.DataFrame
+        Output of compute_seasonal_indices()
+    trailing_days : int
+        Number of days for the reference baseline window (default 90)
+
+    Returns
+    -------
+    dict with keys: cpm, ctr, cvr, aov, reference_baseline, seasonal_index_used
+    """
+    kpi_cols = ["cpm", "ctr", "cvr", "aov"]
+
+    # Compute the reference baseline: trailing N-day weighted ratios
+    # Use data up to the 1st of target month
+    cutoff = pd.Timestamp(year=target_year, month=target_month, day=1)
+    window_start = cutoff - timedelta(days=trailing_days)
+
+    slice_df = df[
+        (df["platform"] == platform)
+        & (df["campaign_type"] == campaign_type)
+        & (df["date"] >= window_start)
+        & (df["date"] < cutoff)
+    ]
+
+    ref_baseline = {}
+    if slice_df.empty:
+        for kpi in kpi_cols:
+            ref_baseline[kpi] = np.nan
+    else:
+        total_spend = slice_df["spend"].sum()
+        total_impressions = slice_df["impressions"].sum()
+        total_clicks = slice_df["clicks"].sum()
+        total_conversions = slice_df["conversions"].sum()
+        total_revenue = slice_df["revenue"].sum()
+
+        ref_baseline["cpm"] = (total_spend / total_impressions * 1000) if total_impressions > 0 else np.nan
+        ref_baseline["ctr"] = (total_clicks / total_impressions * 100) if total_impressions > 0 else np.nan
+        ref_baseline["cvr"] = (total_conversions / total_clicks * 100) if total_clicks > 0 else np.nan
+        ref_baseline["aov"] = (total_revenue / total_conversions) if total_conversions > 0 else np.nan
+
+    # Look up seasonal index for target month
+    idx_row = seasonal_indices[seasonal_indices["month"] == target_month]
+    index_used = {}
+    projected = {}
+
+    for kpi in kpi_cols:
+        idx_col = f"{kpi}_index"
+        if not idx_row.empty and pd.notna(idx_row.iloc[0].get(idx_col, np.nan)):
+            idx_val = idx_row.iloc[0][idx_col]
+            index_used[kpi] = idx_val
+            if pd.notna(ref_baseline[kpi]):
+                projected[kpi] = ref_baseline[kpi] * idx_val
+            else:
+                projected[kpi] = np.nan
+        else:
+            index_used[kpi] = 1.0  # Default: no seasonality adjustment
+            projected[kpi] = ref_baseline.get(kpi, np.nan)
+
+    return {
+        **projected,
+        "reference_baseline": ref_baseline,
+        "seasonal_index_used": index_used,
+        "trailing_days": trailing_days,
+        "data_points": len(slice_df),
+    }
+
+
+def compute_confidence_bands(
+    base_value: float,
+    steps_forward: int,
+    kpi_type: str,
+    band_config: dict = None,
+) -> tuple:
+    """Compute confidence band (low, high) for a projected value.
+
+    Width scales with forecast horizon and KPI type:
+    - Base widths from config: 10% (1mo), 20% (2mo), 30% (3mo)
+    - KPI modifier: market=1.0, account=1.3, product=0.8
+    - Beyond 3 months: +5% per additional month, capped at 50%
+
+    Parameters
+    ----------
+    base_value : float
+        The projected value to band around
+    steps_forward : int
+        How many months ahead this projection is (1, 2, 3, ...)
+    kpi_type : str
+        One of "cpm", "ctr", "cvr", "aov" — used to look up driver type
+    band_config : dict, optional
+        e.g. {"1_month": 10, "2_months": 20, "3_months": 30}
+
+    Returns
+    -------
+    (low, high) tuple
+    """
+    if pd.isna(base_value) or base_value == 0:
+        return (np.nan, np.nan)
+
+    if band_config is None:
+        band_config = {"1_month": 10, "2_months": 20, "3_months": 30}
+
+    # Base width by horizon
+    if steps_forward <= 1:
+        base_pct = band_config.get("1_month", 10)
+    elif steps_forward == 2:
+        base_pct = band_config.get("2_months", 20)
+    elif steps_forward == 3:
+        base_pct = band_config.get("3_months", 30)
+    else:
+        # Beyond 3: start from 3-month band + 5% per extra month, cap at 50%
+        base_pct = min(
+            band_config.get("3_months", 30) + (steps_forward - 3) * 5,
+            50,
+        )
+
+    # KPI driver type modifier
+    driver_type = KPI_DRIVER_TYPE.get(kpi_type, "account")
+    modifier = {"market": 1.0, "account": 1.3, "product": 0.8}.get(driver_type, 1.0)
+
+    width_pct = base_pct * modifier / 100.0
+
+    low = base_value * (1 - width_pct)
+    high = base_value * (1 + width_pct)
+
+    return (low, high)
+
+
+def compute_spend_envelope_warning(
+    df: pd.DataFrame,
+    planned_spend: float,
+    target_month: int,
+    target_year: int,
+    threshold_pct: float = 20,
+) -> dict:
+    """Check if planned spend deviates significantly from historical pattern.
+
+    Compares the planned MoM spend change against the historical same-period
+    MoM change. Flags if the deviation is larger than threshold_pct.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Raw daily data with spend column
+    planned_spend : float
+        Total planned spend for the target month
+    target_month : int
+        Month (1-12) being forecast
+    target_year : int
+        Year of target month
+    threshold_pct : float
+        Alert if deviation exceeds this percentage (default 20%)
+
+    Returns
+    -------
+    dict with keys: warning (bool), message (str), details (dict)
+    """
+    # Get the month before target
+    if target_month == 1:
+        prev_month, prev_year = 12, target_year - 1
+    else:
+        prev_month, prev_year = target_month - 1, target_year
+
+    # Actual spend in the month before target
+    prev_start = pd.Timestamp(year=prev_year, month=prev_month, day=1)
+    prev_end = pd.Timestamp(year=target_year, month=target_month, day=1) - timedelta(days=1)
+    prev_actual = df[df["date"].between(prev_start, prev_end)]["spend"].sum()
+
+    if prev_actual == 0:
+        return {
+            "warning": False,
+            "message": "No previous month data for comparison.",
+            "details": {},
+        }
+
+    # Planned MoM change
+    planned_mom_change = (planned_spend - prev_actual) / prev_actual * 100
+
+    # Historical MoM change for the same transition across available years
+    historical_changes = []
+    for year_offset in [1, 2]:  # Look at last 1-2 years
+        hist_year = target_year - year_offset
+        hist_prev_year = prev_year - year_offset
+
+        hist_prev_start = pd.Timestamp(year=hist_prev_year, month=prev_month, day=1)
+        try:
+            hist_prev_end = pd.Timestamp(year=hist_year, month=target_month, day=1) - timedelta(days=1)
+            hist_curr_start = pd.Timestamp(year=hist_year, month=target_month, day=1)
+            hist_curr_end = (hist_curr_start + pd.DateOffset(months=1)) - timedelta(days=1)
+        except ValueError:
+            continue
+
+        hist_prev_spend = df[df["date"].between(hist_prev_start, hist_prev_end)]["spend"].sum()
+        hist_curr_spend = df[df["date"].between(hist_curr_start, hist_curr_end)]["spend"].sum()
+
+        if hist_prev_spend > 0 and hist_curr_spend > 0:
+            hist_change = (hist_curr_spend - hist_prev_spend) / hist_prev_spend * 100
+            historical_changes.append(hist_change)
+
+    if not historical_changes:
+        return {
+            "warning": False,
+            "message": "Not enough historical data to assess spend deviation.",
+            "details": {"planned_mom_change_pct": round(planned_mom_change, 1)},
+        }
+
+    avg_historical_change = np.mean(historical_changes)
+    deviation = abs(planned_mom_change - avg_historical_change)
+
+    warning = deviation > threshold_pct
+
+    msg = ""
+    if warning:
+        direction = "higher" if planned_mom_change > avg_historical_change else "lower"
+        msg = (
+            f"Planned spend change ({planned_mom_change:+.1f}% MoM) is "
+            f"{deviation:.1f}pp {direction} than historical pattern "
+            f"({avg_historical_change:+.1f}% MoM) for this period."
+        )
+
+    return {
+        "warning": warning,
+        "message": msg,
+        "details": {
+            "planned_mom_change_pct": round(planned_mom_change, 1),
+            "historical_mom_change_pct": round(avg_historical_change, 1),
+            "deviation_pp": round(deviation, 1),
+            "threshold_pct": threshold_pct,
+            "years_compared": len(historical_changes),
+        },
+    }
 
 
 def compute_forecast_accuracy(

@@ -18,7 +18,7 @@ from utils.pattern_engine import (
     suggest_date_ranges,
 )
 from utils.constants import PATTERN_QUESTIONS, COLORS, PLATFORM_COLORS, PLATFORMS, load_settings
-from utils.theme import inject_objectif_lune_css, render_header
+from utils.theme import inject_objectif_lune_css, render_header, PLOTLY_LAYOUT
 
 st.set_page_config(page_title="Pattern Finder", page_icon="🚀", layout="wide")
 inject_objectif_lune_css()
@@ -198,12 +198,10 @@ if st.button("Run Comparison", type="primary"):
                 )
 
         fig.update_layout(
+            **PLOTLY_LAYOUT,
             height=750,
             title_text=f"Weekly KPIs — {selected_platform} {selected_type}",
-            plot_bgcolor=COLORS["white"],
-            paper_bgcolor=COLORS["white"],
             margin=dict(t=80, b=30),
-            font=dict(family="DM Sans, sans-serif", color=COLORS["dark_blue"]),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
         )
         fig.update_yaxes(showgrid=True, gridcolor="#E8E4DB")

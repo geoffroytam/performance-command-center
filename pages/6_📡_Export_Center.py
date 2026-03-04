@@ -86,10 +86,13 @@ col_excel, col_pptx, col_pbi = st.columns(3)
 
 # ── Excel ─────────────────────────────────────────────────────
 with col_excel:
-    st.markdown("#### Excel Report")
-    st.caption(
-        "Executive summary, daily/weekly/monthly data with conditional formatting, "
-        "baselines, and ROAS charts. Ready to share with your team."
+    st.html(
+        f'<div style="background:#FAFAF7;border:1px solid #E8E4DB;border-radius:8px;'
+        f'padding:20px;border-top:3px solid {COLORS["blue"]};min-height:140px;">'
+        f'<div style="font-weight:700;font-size:1.1rem;color:#2D3E50;font-family:\'DM Sans\',sans-serif;">Excel Report</div>'
+        f'<div style="font-size:0.85rem;color:#7A7A72;margin-top:8px;font-family:\'DM Sans\',sans-serif;">'
+        f'Executive summary, daily/weekly/monthly data with conditional formatting, '
+        f'baselines, and ROAS charts. Ready to share with your team.</div></div>'
     )
 
     if st.button("Generate Excel", type="primary", use_container_width=True, key="gen_excel"):
@@ -114,10 +117,13 @@ with col_excel:
 
 # ── PowerPoint ────────────────────────────────────────────────
 with col_pptx:
-    st.markdown("#### PowerPoint Deck")
-    st.caption(
-        "Presentation-ready slides: executive summary, platform breakdown, "
-        "per-platform deep dives, and auto-generated key takeaways."
+    st.html(
+        f'<div style="background:#FAFAF7;border:1px solid #E8E4DB;border-radius:8px;'
+        f'padding:20px;border-top:3px solid {COLORS["green"]};min-height:140px;">'
+        f'<div style="font-weight:700;font-size:1.1rem;color:#2D3E50;font-family:\'DM Sans\',sans-serif;">PowerPoint Deck</div>'
+        f'<div style="font-size:0.85rem;color:#7A7A72;margin-top:8px;font-family:\'DM Sans\',sans-serif;">'
+        f'Presentation-ready slides: executive summary, platform breakdown, '
+        f'per-platform deep dives, and auto-generated key takeaways.</div></div>'
     )
 
     if st.button("Generate PowerPoint", type="primary", use_container_width=True, key="gen_pptx"):
@@ -142,10 +148,13 @@ with col_pptx:
 
 # ── Power BI ─────────────────────────────────────────────────
 with col_pbi:
-    st.markdown("#### Power BI Model")
-    st.caption(
-        "Structured data model with fact tables (daily/weekly/monthly), "
-        "dimension tables (date, platform, baselines), and forecast vs actuals."
+    st.html(
+        f'<div style="background:#FAFAF7;border:1px solid #E8E4DB;border-radius:8px;'
+        f'padding:20px;border-top:3px solid {COLORS["orange"]};min-height:140px;">'
+        f'<div style="font-weight:700;font-size:1.1rem;color:#2D3E50;font-family:\'DM Sans\',sans-serif;">Power BI Model</div>'
+        f'<div style="font-size:0.85rem;color:#7A7A72;margin-top:8px;font-family:\'DM Sans\',sans-serif;">'
+        f'Structured data model with fact tables (daily/weekly/monthly), '
+        f'dimension tables (date, platform, baselines), and forecast vs actuals.</div></div>'
     )
 
     if st.button("Generate Power BI", type="primary", use_container_width=True, key="gen_pbi"):

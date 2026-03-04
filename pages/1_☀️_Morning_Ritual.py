@@ -25,7 +25,7 @@ from utils.constants import (
     ROAS_TARGETS,
     load_settings,
 )
-from utils.theme import inject_objectif_lune_css, render_header
+from utils.theme import inject_objectif_lune_css, render_header, PLOTLY_LAYOUT
 
 st.set_page_config(page_title="Morning Ritual", page_icon="🚀", layout="wide")
 inject_objectif_lune_css()
@@ -296,15 +296,13 @@ if anomaly_details:
                 )
             )
             fig.update_layout(
+                **PLOTLY_LAYOUT,
                 title="Sub-KPI Waterfall (% vs Baseline)",
                 yaxis_title="% Change",
                 xaxis_title="",
                 height=300,
-                margin=dict(t=40, b=20),
-                plot_bgcolor=COLORS["white"],
             )
             fig.update_xaxes(showgrid=False)
-            fig.update_yaxes(showgrid=True, gridcolor="#E8E4DB")
             st.plotly_chart(fig, use_container_width=True)
 else:
     st.success("No anomalies detected. All platforms performing within baseline tolerance.")

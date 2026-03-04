@@ -18,9 +18,13 @@ from utils.forecasting import (
     compute_mom_trends,
     project_baselines_with_trends,
     get_historical_month_summary,
+    compute_seasonal_indices,
+    project_baselines_seasonal,
+    compute_confidence_bands,
+    compute_spend_envelope_warning,
 )
 from utils.pattern_engine import get_patterns_for_month
-from utils.constants import COLORS, ROAS_TARGETS, load_settings
+from utils.constants import COLORS, ROAS_TARGETS, KPI_DRIVER_TYPE, load_settings
 from utils.theme import inject_objectif_lune_css, render_header
 
 st.set_page_config(page_title="Forecasting", page_icon="🚀", layout="wide")
@@ -129,11 +133,39 @@ st.caption(
 )
 
 
+# ── Forecast Method Selection ────────────────────────────────────
+st.markdown("---")
+default_method_idx = 2 if steps_forward >= 3 else 0  # "Both" for 3+ months, "Method A" otherwise
+method_options = [
+    "Method A (MoM Trends)",
+    "Method B (Seasonal Index)",
+    "Both (Show Range)",
+]
+forecast_method = st.radio(
+    "Forecast Method",
+    method_options,
+    index=default_method_idx,
+    horizontal=True,
+    help=(
+        "**Method A** chains month-over-month trend changes — best for 1-2 months ahead. "
+        "**Method B** uses seasonal indices with a 90-day trailing baseline — best for 3+ months. "
+        "**Both** runs both and shows the range."
+    ),
+)
+use_method_a = forecast_method in [method_options[0], method_options[2]]
+use_method_b = forecast_method in [method_options[1], method_options[2]]
+
 # ═══════════════════════════════════════════════════════════════
-# PRE-COMPUTE: Historical MoM Trends
+# PRE-COMPUTE: Historical MoM Trends + Seasonal Indices
 # ═══════════════════════════════════════════════════════════════
+year_weights = settings.get("forecast_year_weights", None)
+exclude_months = settings.get("forecast_promotional_anomalies", [])
+band_config = settings.get("forecast_confidence_bands", {"1_month": 10, "2_months": 20, "3_months": 30})
+stressed_roas_threshold = settings.get("forecast_stressed_roas_threshold", 6.0)
+spend_warning_threshold = settings.get("forecast_spend_warning_threshold", 20)
+
 monthly_kpis = compute_monthly_kpis(df)
-avg_trends = compute_mom_trends(monthly_kpis)
+avg_trends = compute_mom_trends(monthly_kpis, year_weights=year_weights, exclude_months=exclude_months)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -189,6 +221,26 @@ with col4:
     base = last_month["total_spend"]
     forecasted_total = base * (1 + yoy_pct / 100) * (1 + manual_adj / 100)
     st.metric("Forecasted Total Spend", format_currency(forecasted_total))
+
+# ── Spend Envelope Warning ──────────────────────────────────────
+if forecasted_total > 0:
+    envelope = compute_spend_envelope_warning(
+        df,
+        planned_spend=forecasted_total,
+        target_month=target_month_num,
+        target_year=target_year,
+        threshold_pct=spend_warning_threshold,
+    )
+    if envelope["warning"]:
+        st.warning(f"⚠️ **Spend Envelope Alert:** {envelope['message']}")
+        details = envelope.get("details", {})
+        if details:
+            st.caption(
+                f"Planned MoM change: {details.get('planned_mom_change_pct', 0):+.1f}% | "
+                f"Historical pattern: {details.get('historical_mom_change_pct', 0):+.1f}% | "
+                f"Deviation: {details.get('deviation_pp', 0):.1f}pp | "
+                f"Based on {details.get('years_compared', 0)} year(s) of data"
+            )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -282,15 +334,21 @@ for platform in available_platforms:
 
 
 # ═══════════════════════════════════════════════════════════════
-# STEP 4: MONTHLY REVENUE PROJECTION (Trend-Based)
+# STEP 4: MONTHLY REVENUE PROJECTION (Dual Method)
 # ═══════════════════════════════════════════════════════════════
 st.markdown("---")
 st.subheader("Step 4: Monthly Revenue Projection")
 
+method_label = {
+    method_options[0]: "Method A (MoM Trends)",
+    method_options[1]: "Method B (Seasonal Index)",
+    method_options[2]: "Both Methods",
+}[forecast_method]
+
 if steps_forward > 0:
     st.caption(
-        f"Baselines projected from {max_data_date.strftime('%B %Y')} → "
-        f"{target_month.strftime('%B %Y')} using historical month-over-month trends."
+        f"Projecting from {max_data_date.strftime('%B %Y')} → "
+        f"{target_month.strftime('%B %Y')} using **{method_label}**."
     )
 else:
     cpm_days = settings.get("cpm_baseline_days", 14)
@@ -299,9 +357,21 @@ else:
 
 projection_rows = []
 missing_baselines = []
-trend_details = {}  # Store trend projection steps for transparency
+trend_details = {}  # Method A transparency
+seasonal_details = {}  # Method B transparency
+risk_alerts = []  # Risk alerts for stressed ROAS
 
 for platform in available_platforms:
+    # Pre-compute seasonal indices for Method B (per platform × campaign type)
+    seasonal_cache = {}
+    if use_method_b:
+        for ct in ["Prospecting", "Retargeting"]:
+            seasonal_cache[ct] = compute_seasonal_indices(
+                monthly_kpis, platform, ct,
+                year_weights=year_weights,
+                exclude_months=exclude_months,
+            )
+
     for ctype in ["Prospecting", "Retargeting"]:
         spend_key = "prospecting_spend" if ctype == "Prospecting" else "retargeting_spend"
         spend = pr_splits[platform].get(spend_key, 0)
@@ -324,12 +394,12 @@ for platform in available_platforms:
             missing_baselines.append(f"{platform} {ctype}: no CPM baseline")
             continue
 
-        # ── Project baselines forward if target is a future month ──
-        if steps_forward > 0 and not avg_trends.empty:
-            # Determine the anchor month (the month of the latest data)
+        # ── METHOD A: Chained MoM Trends ────────────────────────────
+        method_a_proj = None
+        method_a_baselines = {}
+        if use_method_a and steps_forward > 0 and not avg_trends.empty:
             anchor_month = last_complete_month_num
-
-            projected = project_baselines_with_trends(
+            projected_a = project_baselines_with_trends(
                 current_baselines={"cpm": cpm_val, "ctr": ctr_val, "cvr": cvr_val, "aov": aov_val},
                 current_month=anchor_month,
                 target_month=target_month_num,
@@ -337,57 +407,140 @@ for platform in available_platforms:
                 campaign_type=ctype,
                 avg_trends=avg_trends,
             )
+            a_cpm = projected_a["cpm"] if pd.notna(projected_a["cpm"]) and projected_a["cpm"] > 0 else cpm_val
+            a_ctr = projected_a["ctr"] if pd.notna(projected_a["ctr"]) else ctr_val
+            a_cvr = projected_a["cvr"] if pd.notna(projected_a["cvr"]) else cvr_val
+            a_aov = projected_a["aov"] if pd.notna(projected_a["aov"]) else aov_val
+            method_a_baselines = {"cpm": a_cpm, "ctr": a_ctr, "cvr": a_cvr, "aov": a_aov}
+            method_a_proj = project_revenue(spend, a_cpm, a_ctr, a_cvr, a_aov)
 
-            # Use projected baselines
-            proj_cpm = projected["cpm"]
-            proj_ctr = projected["ctr"]
-            proj_cvr = projected["cvr"]
-            proj_aov = projected["aov"]
             trend_details[f"{platform}_{ctype}"] = {
                 "anchor_baselines": {"cpm": cpm_val, "ctr": ctr_val, "cvr": cvr_val, "aov": aov_val},
-                "projected_baselines": {"cpm": proj_cpm, "ctr": proj_ctr, "cvr": proj_cvr, "aov": proj_aov},
-                "steps": projected["trend_steps"],
+                "projected_baselines": method_a_baselines,
+                "steps": projected_a["trend_steps"],
             }
+        elif use_method_a:
+            # No forward steps — use current baselines as Method A
+            method_a_baselines = {"cpm": cpm_val, "ctr": ctr_val, "cvr": cvr_val, "aov": aov_val}
+            method_a_proj = project_revenue(spend, cpm_val, ctr_val, cvr_val, aov_val)
+
+        # ── METHOD B: Seasonal Index ────────────────────────────────
+        method_b_proj = None
+        method_b_baselines = {}
+        if use_method_b:
+            s_indices = seasonal_cache.get(ctype, pd.DataFrame())
+            if not s_indices.empty:
+                seasonal_result = project_baselines_seasonal(
+                    df, target_month_num, target_year,
+                    platform, ctype, s_indices, trailing_days=90,
+                )
+                b_cpm = seasonal_result.get("cpm", np.nan)
+                b_ctr = seasonal_result.get("ctr", np.nan)
+                b_cvr = seasonal_result.get("cvr", np.nan)
+                b_aov = seasonal_result.get("aov", np.nan)
+
+                # Fall back to current baselines where seasonal data is missing
+                if pd.isna(b_cpm) or b_cpm <= 0:
+                    b_cpm = cpm_val
+                if pd.isna(b_ctr):
+                    b_ctr = ctr_val
+                if pd.isna(b_cvr):
+                    b_cvr = cvr_val
+                if pd.isna(b_aov):
+                    b_aov = aov_val
+
+                method_b_baselines = {"cpm": b_cpm, "ctr": b_ctr, "cvr": b_cvr, "aov": b_aov}
+                method_b_proj = project_revenue(spend, b_cpm, b_ctr, b_cvr, b_aov)
+
+                seasonal_details[f"{platform}_{ctype}"] = {
+                    "reference_baseline": seasonal_result.get("reference_baseline", {}),
+                    "seasonal_index_used": seasonal_result.get("seasonal_index_used", {}),
+                    "trailing_days": seasonal_result.get("trailing_days", 90),
+                    "data_points": seasonal_result.get("data_points", 0),
+                    "projected_baselines": method_b_baselines,
+                }
+
+        # ── Choose primary projection for display ───────────────────
+        # If both methods, use midpoint; otherwise use whichever is active
+        if method_a_proj and method_b_proj:
+            # Midpoint of the two methods
+            mid_cpm = (method_a_baselines["cpm"] + method_b_baselines["cpm"]) / 2
+            mid_ctr = (method_a_baselines["ctr"] + method_b_baselines["ctr"]) / 2
+            mid_cvr = (method_a_baselines["cvr"] + method_b_baselines["cvr"]) / 2
+            mid_aov = (method_a_baselines["aov"] + method_b_baselines["aov"]) / 2
+            primary_baselines = {"cpm": mid_cpm, "ctr": mid_ctr, "cvr": mid_cvr, "aov": mid_aov}
+            primary_proj = project_revenue(spend, mid_cpm, mid_ctr, mid_cvr, mid_aov)
+        elif method_a_proj:
+            primary_baselines = method_a_baselines
+            primary_proj = method_a_proj
+        elif method_b_proj:
+            primary_baselines = method_b_baselines
+            primary_proj = method_b_proj
         else:
-            proj_cpm = cpm_val
-            proj_ctr = ctr_val
-            proj_cvr = cvr_val
-            proj_aov = aov_val
+            # Fallback: use current baselines
+            primary_baselines = {"cpm": cpm_val, "ctr": ctr_val, "cvr": cvr_val, "aov": aov_val}
+            primary_proj = project_revenue(spend, cpm_val, ctr_val, cvr_val, aov_val)
 
-        # Ensure projected values are still valid
-        if pd.isna(proj_cpm) or proj_cpm <= 0:
-            proj_cpm = cpm_val  # Fall back to anchor
-        if pd.isna(proj_ctr):
-            proj_ctr = ctr_val
-        if pd.isna(proj_cvr):
-            proj_cvr = cvr_val
-        if pd.isna(proj_aov):
-            proj_aov = aov_val
-
-        proj = project_revenue(spend, proj_cpm, proj_ctr, proj_cvr, proj_aov)
-
+        roas_val = primary_proj["roas"]
         target_roas = ROAS_TARGETS.get(ctype, 8)
-        roas_val = proj["roas"]
         roas_status = "above" if roas_val >= target_roas else ("near" if roas_val >= target_roas * 0.8 else "below")
 
-        projection_rows.append({
+        # ── Confidence bands on ROAS ────────────────────────────────
+        steps_for_band = max(steps_forward, 1)
+        roas_low, roas_high = compute_confidence_bands(
+            roas_val, steps_for_band, "cvr", band_config
+        )
+        roas_range_str = f"{roas_low:.1f} – {roas_high:.1f}" if pd.notna(roas_low) else "—"
+
+        # ── Build projection row ────────────────────────────────────
+        row_data = {
             "Platform": platform,
             "Type": ctype,
             "Spend": format_currency(spend),
-            "CPM": format_currency(proj_cpm),
-            "Impressions": format_number(proj["impressions"], 0),
-            "CTR (LPV)": f"{proj_ctr:.2f}%" if not pd.isna(proj_ctr) else "—",
-            "Clicks (LPV)": format_number(proj["clicks"], 0),
-            "CVR (LPV)": f"{proj_cvr:.2f}%" if not pd.isna(proj_cvr) else "—",
-            "Orders": format_number(proj["orders"], 0),
-            "AOV": format_currency(proj_aov) if not pd.isna(proj_aov) else "—",
-            "Revenue": format_currency(proj["revenue"]),
+            "CPM": format_currency(primary_baselines["cpm"]),
+            "Impressions": format_number(primary_proj["impressions"], 0),
+            "CTR (LPV)": f"{primary_baselines['ctr']:.2f}%" if not pd.isna(primary_baselines["ctr"]) else "—",
+            "Clicks (LPV)": format_number(primary_proj["clicks"], 0),
+            "CVR (LPV)": f"{primary_baselines['cvr']:.2f}%" if not pd.isna(primary_baselines["cvr"]) else "—",
+            "Orders": format_number(primary_proj["orders"], 0),
+            "AOV": format_currency(primary_baselines["aov"]) if not pd.isna(primary_baselines["aov"]) else "—",
+            "Revenue": format_currency(primary_proj["revenue"]),
             "ROAS": format_number(roas_val, 1),
+            "ROAS Range": roas_range_str,
             "_spend": spend,
-            "_baselines": {"cpm": proj_cpm, "ctr": proj_ctr, "cvr": proj_cvr, "aov": proj_aov},
-            "_proj": proj,
+            "_baselines": primary_baselines,
+            "_proj": primary_proj,
             "_roas_status": roas_status,
-        })
+            "_method_a_proj": method_a_proj,
+            "_method_b_proj": method_b_proj,
+            "_method_a_baselines": method_a_baselines,
+            "_method_b_baselines": method_b_baselines,
+        }
+
+        # Method comparison columns when using Both
+        if method_a_proj and method_b_proj:
+            row_data["A ROAS"] = format_number(method_a_proj["roas"], 1)
+            row_data["B ROAS"] = format_number(method_b_proj["roas"], 1)
+
+        projection_rows.append(row_data)
+
+        # ── Risk Alert: stressed ROAS ───────────────────────────────
+        # Stress test: CPM +15%, CVR -10%
+        stress_proj = project_revenue(
+            spend,
+            primary_baselines["cpm"] * 1.15 if not pd.isna(primary_baselines["cpm"]) else np.nan,
+            primary_baselines["ctr"],
+            primary_baselines["cvr"] * 0.90 if not pd.isna(primary_baselines["cvr"]) else np.nan,
+            primary_baselines["aov"],
+        )
+        if stress_proj["roas"] < stressed_roas_threshold:
+            risk_alerts.append({
+                "platform": platform,
+                "type": ctype,
+                "stressed_roas": stress_proj["roas"],
+                "threshold": stressed_roas_threshold,
+                "base_roas": roas_val,
+            })
 
 if missing_baselines:
     for msg in missing_baselines:
@@ -407,38 +560,101 @@ if projection_rows:
     total_orders = sum(r["_proj"]["orders"] for r in projection_rows)
     total_roas = total_revenue / total_spend if total_spend > 0 else 0
 
-    st.markdown(
+    st.html(
         f'<div style="background:{COLORS["light_gray"]}; padding:14px; border-radius:8px; margin-top:8px;">'
         f'<b>Monthly Totals:</b> Spend {format_currency(total_spend)} '
         f'| Revenue {format_currency(total_revenue)} '
         f'| Orders {format_number(total_orders, 0)} '
         f'| Blended ROAS {total_roas:.1f}'
-        f'</div>',
-        unsafe_allow_html=True,
+        f'</div>'
     )
 
-    # ── Trend Projection Transparency ─────────────────────────────
-    if trend_details:
-        with st.expander("📈 How Baselines Were Projected (Trend Analysis)"):
-            st.markdown(
-                "Baselines are projected forward month-by-month using **average historical "
-                "month-over-month percentage changes** observed in your data. "
-                "The more years of data available, the more reliable the trend."
+    # ── Risk Alerts ──────────────────────────────────────────────
+    if risk_alerts:
+        st.markdown("#### ⚠️ Risk Alerts")
+        for alert in risk_alerts:
+            st.error(
+                f"**{alert['platform']} {alert['type']}** — "
+                f"Stressed ROAS ({alert['stressed_roas']:.1f}) falls below "
+                f"threshold ({alert['threshold']:.1f}). "
+                f"Base case ROAS is {alert['base_roas']:.1f}. "
+                f"Consider reducing allocation or reviewing creative performance."
             )
+
+    # ── YoY Comparison ─────────────────────────────────────────────
+    with st.expander(f"📊 YoY Comparison — {target_month.strftime('%B %Y')} vs Last Year"):
+        yoy_rows = []
+        for row in projection_rows:
+            plat = row["Platform"]
+            ct = row["Type"]
+            history = get_historical_month_summary(df, target_month_num, plat, ct)
+            # Find the most recent year's data for comparison
+            last_year_data = None
+            for h in reversed(history):
+                if h["year"] < target_year:
+                    last_year_data = h
+                    break
+
+            proj_rev = row["_proj"]["revenue"]
+            proj_roas = row["_proj"]["roas"]
+            if last_year_data:
+                ly_rev = last_year_data["revenue"]
+                ly_roas = last_year_data["roas"]
+                rev_yoy = ((proj_rev - ly_rev) / ly_rev * 100) if ly_rev > 0 else np.nan
+                roas_yoy = ((proj_roas - ly_roas) / ly_roas * 100) if ly_roas > 0 else np.nan
+                yoy_rows.append({
+                    "Platform": plat,
+                    "Type": ct,
+                    f"Projected Rev ({target_year})": format_currency(proj_rev),
+                    f"Last Year Rev ({last_year_data['year']})": format_currency(ly_rev),
+                    "Revenue YoY": f"{rev_yoy:+.1f}%" if pd.notna(rev_yoy) else "—",
+                    f"Projected ROAS ({target_year})": format_number(proj_roas, 1),
+                    f"Last Year ROAS ({last_year_data['year']})": format_number(ly_roas, 1),
+                    "ROAS YoY": f"{roas_yoy:+.1f}%" if pd.notna(roas_yoy) else "—",
+                })
+            else:
+                yoy_rows.append({
+                    "Platform": plat,
+                    "Type": ct,
+                    f"Projected Rev ({target_year})": format_currency(proj_rev),
+                    f"Last Year Rev": "No data",
+                    "Revenue YoY": "—",
+                    f"Projected ROAS ({target_year})": format_number(proj_roas, 1),
+                    f"Last Year ROAS": "No data",
+                    "ROAS YoY": "—",
+                })
+
+        if yoy_rows:
+            st.dataframe(pd.DataFrame(yoy_rows), use_container_width=True, hide_index=True)
+        else:
+            st.caption("No projection data for YoY comparison.")
+
+    # ── Method A: Trend Projection Transparency ────────────────────
+    if trend_details:
+        with st.expander("📈 Method A — How Baselines Were Projected (MoM Trends)"):
+            st.markdown(
+                "Baselines are projected forward month-by-month using **weighted historical "
+                "month-over-month percentage changes** observed in your data."
+            )
+            if year_weights:
+                weight_desc = ", ".join(f"{k}: {v}" for k, v in year_weights.items())
+                st.caption(f"Year weights: {weight_desc}")
+            if exclude_months:
+                ex_desc = ", ".join(f"{e.get('year')}/{e.get('month')} ({e.get('label', '')})" for e in exclude_months)
+                st.caption(f"Excluded months: {ex_desc}")
 
             for key, details in trend_details.items():
                 platform_label = key.replace("_", " — ", 1)
                 anchor = details["anchor_baselines"]
-                projected = details["projected_baselines"]
+                projected_bl = details["projected_baselines"]
                 steps_list = details["steps"]
 
                 st.markdown(f"**{platform_label}**")
 
-                # Show anchor → projected comparison
                 comparison_data = []
                 for kpi in ["cpm", "ctr", "cvr", "aov"]:
                     a_val = anchor[kpi]
-                    p_val = projected[kpi]
+                    p_val = projected_bl[kpi]
                     if pd.notna(a_val) and pd.notna(p_val) and a_val != 0:
                         change_pct = (p_val - a_val) / a_val * 100
                         change_str = f"{change_pct:+.1f}%"
@@ -457,7 +673,6 @@ if projection_rows:
 
                 st.dataframe(pd.DataFrame(comparison_data), use_container_width=True, hide_index=True)
 
-                # Show step-by-step month transitions
                 if steps_list:
                     month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -477,11 +692,51 @@ if projection_rows:
 
                 st.markdown("---")
 
+    # ── Method B: Seasonal Index Transparency ──────────────────────
+    if seasonal_details:
+        with st.expander("🌊 Method B — Seasonal Index Details"):
+            st.markdown(
+                "Seasonal indices represent each month's KPI as a fraction of the annual average. "
+                "These are applied to a **trailing 90-day baseline** to project forward independently."
+            )
+
+            for key, details in seasonal_details.items():
+                platform_label = key.replace("_", " — ", 1)
+                ref_bl = details.get("reference_baseline", {})
+                idx_used = details.get("seasonal_index_used", {})
+                proj_bl = details.get("projected_baselines", {})
+
+                st.markdown(f"**{platform_label}**")
+                st.caption(
+                    f"Trailing {details.get('trailing_days', 90)}-day baseline "
+                    f"({details.get('data_points', 0)} data points)"
+                )
+
+                idx_rows = []
+                for kpi in ["cpm", "ctr", "cvr", "aov"]:
+                    ref_v = ref_bl.get(kpi, np.nan)
+                    idx_v = idx_used.get(kpi, 1.0)
+                    prj_v = proj_bl.get(kpi, np.nan)
+
+                    fmt_ref = format_currency(ref_v) if kpi in ["cpm", "aov"] else (f"{ref_v:.2f}%" if pd.notna(ref_v) else "—")
+                    fmt_prj = format_currency(prj_v) if kpi in ["cpm", "aov"] else (f"{prj_v:.2f}%" if pd.notna(prj_v) else "—")
+
+                    idx_rows.append({
+                        "KPI": kpi.upper(),
+                        "90d Baseline": fmt_ref,
+                        "Seasonal Index": f"{idx_v:.3f}" if pd.notna(idx_v) else "—",
+                        f"Projected ({target_month.strftime('%b %Y')})": fmt_prj,
+                        "Driver Type": KPI_DRIVER_TYPE.get(kpi, "unknown").title(),
+                    })
+
+                st.dataframe(pd.DataFrame(idx_rows), use_container_width=True, hide_index=True)
+                st.markdown("---")
+
     # ── Historical Context ─────────────────────────────────────────
     with st.expander(f"📊 Historical Performance for {target_month.strftime('%B')} (Past Years)"):
         st.markdown(
             f"What happened in **{target_month.strftime('%B')}** in previous years? "
-            f"Use this to validate whether the trend-based projections make sense."
+            f"Use this to validate whether the projections make sense."
         )
         for platform in available_platforms:
             for ctype in ["Prospecting", "Retargeting"]:
@@ -518,8 +773,10 @@ Revenue / Spend = ROAS
 
 **Baseline sources:**
 - **Current month or past month:** Uses rolling averages from actual data (CPM/CTR/CVR: {settings.get('cpm_baseline_days', 14)}-day, AOV: {settings.get('aov_baseline_days', 60)}-day).
-- **Future months:** Starts from the latest rolling averages, then applies historical month-over-month trends to project each KPI forward to the target month.
-- All baselines are weighted ratios computed from raw sums (not averaged daily ratios)."""
+- **Method A (MoM Trends):** Starts from the latest rolling averages, then chains historical month-over-month trends forward.
+- **Method B (Seasonal Index):** Uses a 90-day trailing baseline multiplied by the seasonal index for the target month.
+- **Both:** Shows midpoint when both methods are selected.
+- Confidence bands widen with forecast distance and KPI driver type (market / account / product)."""
         )
 
         for row in projection_rows:
@@ -625,25 +882,22 @@ if projection_rows:
     col_con, col_base, col_opt = st.columns(3)
 
     with col_con:
-        st.markdown(
+        st.html(
             f'<div style="text-align:center; padding:8px; background:#FDF6F0; border-radius:8px; '
             f'border-top:3px solid {COLORS["red"]};">'
-            f'<b>Conservative</b><br/><span style="font-size:0.8rem;">CPM +15%, CVR -10%</span></div>',
-            unsafe_allow_html=True,
+            f'<b>Conservative</b><br/><span style="font-size:0.8rem;">CPM +15%, CVR -10%</span></div>'
         )
     with col_base:
-        st.markdown(
+        st.html(
             f'<div style="text-align:center; padding:8px; background:{COLORS["light_gray"]}; border-radius:8px; '
             f'border-top:3px solid {COLORS["blue"]};">'
-            f'<b>Base Case</b><br/><span style="font-size:0.8rem;">Current baselines</span></div>',
-            unsafe_allow_html=True,
+            f'<b>Base Case</b><br/><span style="font-size:0.8rem;">Current baselines</span></div>'
         )
     with col_opt:
-        st.markdown(
+        st.html(
             f'<div style="text-align:center; padding:8px; background:#F0F5F1; border-radius:8px; '
             f'border-top:3px solid {COLORS["green"]};">'
-            f'<b>Optimistic</b><br/><span style="font-size:0.8rem;">CPM -10%, CVR +10%</span></div>',
-            unsafe_allow_html=True,
+            f'<b>Optimistic</b><br/><span style="font-size:0.8rem;">CPM -10%, CVR +10%</span></div>'
         )
 
     scenario_rows = []
@@ -706,14 +960,13 @@ if projection_rows:
         s_roas = totals[scenario]["revenue"] / totals[scenario]["spend"] if totals[scenario]["spend"] > 0 else 0
         label = scenario.title().replace("Base", "Base Case")
         with col:
-            st.markdown(
+            st.html(
                 f'<div style="background:{bg}; padding:12px; border-radius:8px; text-align:center;">'
                 f'<div style="color:{color}; font-weight:700;">{label}</div>'
                 f'<div style="font-size:1.2rem; font-weight:700;">ROAS {s_roas:.1f}</div>'
                 f'<div style="font-size:0.85rem;">{format_currency(totals[scenario]["revenue"])} revenue</div>'
                 f'<div style="font-size:0.85rem;">{totals[scenario]["orders"]:,.0f} orders</div>'
-                f'</div>',
-                unsafe_allow_html=True,
+                f'</div>'
             )
 
 
@@ -780,6 +1033,7 @@ if projection_rows:
     if st.button("Save Forecast", type="primary"):
         forecast_entry = {
             "month": target_month_str,
+            "method": forecast_method,
             "total_spend": forecasted_total,
             "platform_allocation": platform_alloc,
             "pr_splits": {p: {"prospecting_pct": s["prospecting_pct"]} for p, s in pr_splits.items()},
@@ -791,6 +1045,8 @@ if projection_rows:
                     "revenue": r["_proj"]["revenue"],
                     "roas": r["_proj"]["roas"],
                     "orders": r["_proj"]["orders"],
+                    "method_a_roas": r["_method_a_proj"]["roas"] if r.get("_method_a_proj") else None,
+                    "method_b_roas": r["_method_b_proj"]["roas"] if r.get("_method_b_proj") else None,
                 }
                 for r in projection_rows
             ],
@@ -809,6 +1065,21 @@ if projection_rows:
                 }
                 for k, v in trend_details.items()
             } if trend_details else {},
+            "seasonal_details": {
+                k: {
+                    "reference_baseline": v.get("reference_baseline", {}),
+                    "seasonal_index_used": v.get("seasonal_index_used", {}),
+                }
+                for k, v in seasonal_details.items()
+            } if seasonal_details else {},
+            "risk_alerts": [
+                {
+                    "platform": a["platform"],
+                    "type": a["type"],
+                    "stressed_roas": round(a["stressed_roas"], 2),
+                }
+                for a in risk_alerts
+            ] if risk_alerts else [],
             "timestamp": datetime.now().isoformat(),
         }
         log = load_forecast_log()

@@ -209,14 +209,13 @@ for idx, (label, key, invert) in enumerate(kpi_cards):
             t_color = COLORS["green"] if curr_val >= target else COLORS["red"]
             t_label = "above" if curr_val >= target else "below"
             target_line = f'<div style="font-size:0.75rem; color:{t_color};">{t_label} target {target}</div>'
-        st.markdown(
+        st.html(
             f'<div style="background:{COLORS["light_gray"]}; padding:12px 16px; border-radius:8px; text-align:center;">'
             f'<div style="font-size:0.8rem; color:{COLORS["gray"]};">{label}</div>'
             f'<div style="font-size:1.3rem; font-weight:700; color:#2D3E50;">{formatted}</div>'
             f'{target_line}'
             f'<div style="font-size:0.85rem;">{arrow_html} vs comparison</div>'
-            f'</div>',
-            unsafe_allow_html=True,
+            f'</div>'
         )
 
 
@@ -246,10 +245,11 @@ roas_delta = pct_change(curr["roas"], comp["roas"])
 spend_delta = pct_change(curr["spend"], comp["spend"])
 revenue_delta = pct_change(curr["revenue"], comp["revenue"])
 
-st.markdown(
-    f'#### ROAS: {format_kpi_value("roas", curr["roas"])} '
-    f'({delta_arrow(roas_delta)} vs comparison {format_kpi_value("roas", comp["roas"])})',
-    unsafe_allow_html=True,
+st.html(
+    f'<h4 style="font-weight:600;color:#2D3E50;font-family:\'DM Sans\',sans-serif;">'
+    f'ROAS: {format_kpi_value("roas", curr["roas"])} '
+    f'({delta_arrow(roas_delta)} vs comparison {format_kpi_value("roas", comp["roas"])})'
+    f'</h4>'
 )
 
 # Determine primary driver at ROAS level
@@ -284,7 +284,7 @@ st.markdown(roas_narrative)
 col_cost, col_rev = st.columns(2)
 
 with col_cost:
-    st.markdown(
+    st.html(
         f'<div style="background:#FDF6F0; padding:16px; border-radius:8px; border-left:4px solid {COLORS["orange"]};">'
         f'<div style="font-weight:700; font-size:1.1rem; margin-bottom:8px;">Cost Side</div>'
         f'<table style="width:100%; font-size:0.9rem;">'
@@ -294,12 +294,11 @@ with col_cost:
         f'<td style="text-align:right;">{delta_arrow(pct_change(curr["cpm"], comp["cpm"]), invert=True)}</td></tr>'
         f'<tr><td>Impressions</td><td style="text-align:right;">{format_kpi_value("impressions", curr["impressions"])}</td>'
         f'<td style="text-align:right;">{delta_arrow(pct_change(curr["impressions"], comp["impressions"]))}</td></tr>'
-        f'</table></div>',
-        unsafe_allow_html=True,
+        f'</table></div>'
     )
 
 with col_rev:
-    st.markdown(
+    st.html(
         f'<div style="background:#F0F5F1; padding:16px; border-radius:8px; border-left:4px solid {COLORS["green"]};">'
         f'<div style="font-weight:700; font-size:1.1rem; margin-bottom:8px;">Revenue Side</div>'
         f'<table style="width:100%; font-size:0.9rem;">'
@@ -309,8 +308,7 @@ with col_rev:
         f'<td style="text-align:right;">{delta_arrow(pct_change(curr["orders"], comp["orders"]))}</td></tr>'
         f'<tr><td>AOV</td><td style="text-align:right;">{format_kpi_value("aov", curr["aov"])}</td>'
         f'<td style="text-align:right;">{delta_arrow(pct_change(curr["aov"], comp["aov"]))}</td></tr>'
-        f'</table></div>',
-        unsafe_allow_html=True,
+        f'</table></div>'
     )
 
 # ── Level 2: Deeper decomposition ────────────────────────────
@@ -361,7 +359,7 @@ for label, key, curr_val, comp_val, invert, formula in decomp_rows:
     )
 
 decomp_html += '</table>'
-st.markdown(decomp_html, unsafe_allow_html=True)
+st.html(decomp_html)
 
 st.caption("Rows highlighted in red indicate a negative impact on performance. Green = positive impact.")
 
@@ -431,13 +429,12 @@ if drivers:
     st.markdown("**Key Drivers Identified:**")
     for i, d in enumerate(drivers, 1):
         color = COLORS["green"] if d["impact"] == "positive" else COLORS["red"]
-        st.markdown(
+        st.html(
             f'<div style="background:{COLORS["light_gray"]}; padding:10px 14px; border-radius:6px; '
             f'margin-bottom:8px; border-left:4px solid {color};">'
             f'<b>{d["kpi"]}</b> ({d["delta"]:+.1f}% — {d["impact"]} impact)<br/>'
             f'{d["explanation"]}'
-            f'</div>',
-            unsafe_allow_html=True,
+            f'</div>'
         )
 
     # Build a summary narrative
@@ -569,12 +566,11 @@ if drivers:
         )
 
     analyst_text = " ".join(para_parts)
-    st.markdown(
+    st.html(
         f'<div style="background:{COLORS["light_gray"]}; padding:16px; border-radius:8px; '
         f'line-height:1.6; font-size:0.92rem; color:#403833;">'
         f'{analyst_text}'
-        f'</div>',
-        unsafe_allow_html=True,
+        f'</div>'
     )
 
 else:
@@ -612,13 +608,12 @@ if "below" in diag_title.lower() or "issue" in diag_title.lower() or "fatigue" i
 elif "false positive" in diag_title.lower():
     diag_color = COLORS["orange"]
 
-st.markdown(
+st.html(
     f'<div style="background:{COLORS["light_gray"]}; padding:16px; border-radius:8px; '
     f'border-left:4px solid {diag_color};">'
     f'<div style="font-weight:700; font-size:1.1rem; color:{diag_color};">{diag_title}</div>'
     f'<div style="margin-top:8px;">{diag_suggestion}</div>'
-    f'</div>',
-    unsafe_allow_html=True,
+    f'</div>'
 )
 
 # Build specific action recommendations based on the analysis

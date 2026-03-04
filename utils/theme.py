@@ -132,10 +132,7 @@ h2, h3 {
     transition: all 0.2s ease;
 }
 
-.stButton > button[kind="primary"]:hover {
-    background-color: #3D5D8A !important;
-    box-shadow: 0 2px 8px rgba(74, 111, 165, 0.25) !important;
-}
+/* primary hover is defined in the enhanced section below */
 
 .stButton > button[kind="secondary"] {
     border: 1px solid #E8E4DB !important;
@@ -190,6 +187,85 @@ hr {
     background: transparent;
 }
 
+/* ── Enhanced Design — Ligne Claire Refinements ──── */
+
+/* Metric card hover — subtle lift */
+[data-testid="stMetric"] {
+    transition: all 0.2s ease;
+}
+[data-testid="stMetric"]:hover {
+    box-shadow: 0 2px 8px rgba(74, 111, 165, 0.12);
+    transform: translateY(-1px);
+}
+
+/* Data tables — dark header, alternating rows */
+[data-testid="stDataFrame"] thead tr th {
+    background: #2D3E50 !important;
+    color: #F0EDE6 !important;
+    font-weight: 500 !important;
+    text-transform: uppercase;
+    font-size: 0.78rem !important;
+    letter-spacing: 0.3px;
+}
+[data-testid="stDataFrame"] tbody tr:nth-child(even) {
+    background: #F5F0E8 !important;
+}
+
+/* Button hover — ligne claire color inversion */
+.stButton > button[kind="primary"]:hover {
+    background-color: #FAFAF7 !important;
+    color: #4A6FA5 !important;
+    border: 1.5px solid #4A6FA5 !important;
+    box-shadow: none !important;
+}
+.stButton > button[kind="secondary"]:hover {
+    background: #2D3E50 !important;
+    color: #FAFAF7 !important;
+    border-color: #2D3E50 !important;
+}
+
+/* Form inputs — themed borders and focus ring */
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stTextArea"] textarea {
+    border: 1px solid #E8E4DB !important;
+    border-radius: 6px !important;
+    font-family: 'DM Sans', sans-serif !important;
+}
+[data-testid="stTextInput"] input:focus,
+[data-testid="stNumberInput"] input:focus,
+[data-testid="stTextArea"] textarea:focus {
+    border-color: #4A6FA5 !important;
+    box-shadow: 0 0 0 1px #4A6FA5 !important;
+}
+
+/* Tab active state */
+.stTabs [data-baseweb="tab"][aria-selected="true"] {
+    border-bottom: 2px solid #4A6FA5 !important;
+    color: #2D3E50 !important;
+    font-weight: 600 !important;
+}
+
+/* Selectbox and multiselect refinement */
+[data-baseweb="select"] > div {
+    border-color: #E8E4DB !important;
+}
+[data-baseweb="select"] > div:focus-within {
+    border-color: #4A6FA5 !important;
+    box-shadow: 0 0 0 1px #4A6FA5 !important;
+}
+
+/* Slider styling */
+[data-testid="stSlider"] [role="slider"] {
+    background-color: #4A6FA5 !important;
+}
+
+/* Error alert styling */
+.stError {
+    background-color: rgba(196, 92, 74, 0.08) !important;
+    border-color: #C45C4A !important;
+}
+
 </style>
 <script>
 // Rename "app" sidebar nav label to "Performance Command Center"
@@ -234,3 +310,32 @@ def render_welcome_rocket():
 {_ROCKET_SVG_LARGE}
 <div style="font-size:1.1rem;color:#7A7A72;margin-top:16px;font-family:'DM Sans',sans-serif;letter-spacing:0.3px;">Upload CSV exports to begin your mission</div>
 </div>''')
+
+
+def render_empty_state(message: str, icon: str = ""):
+    """Render a themed empty state with optional icon."""
+    st.html(f'''<div style="text-align:center;padding:40px 20px;color:#7A7A72;font-family:'DM Sans',sans-serif;">
+<div style="font-size:2rem;margin-bottom:8px;">{icon}</div>
+<div style="font-size:0.95rem;letter-spacing:0.3px;">{message}</div>
+</div>''')
+
+
+def render_card(title: str, content: str, border_color: str = "#4A6FA5"):
+    """Render a themed card with left accent border."""
+    st.html(f'''<div style="background:#FAFAF7;border:1px solid #E8E4DB;border-radius:8px;
+padding:16px 20px;border-left:3px solid {border_color};margin-bottom:8px;">
+<div style="font-weight:600;color:#2D3E50;font-size:0.95rem;margin-bottom:6px;font-family:'DM Sans',sans-serif;">{title}</div>
+<div style="color:#7A7A72;font-size:0.88rem;font-family:'DM Sans',sans-serif;">{content}</div>
+</div>''')
+
+
+def themed_spinner_message(context: str) -> str:
+    """Return a themed spinner message based on context."""
+    messages = {
+        "forecast": "Calculating trajectories...",
+        "export": "Assembling mission report...",
+        "analysis": "Running diagnostic scan...",
+        "pattern": "Scanning historical records...",
+        "loading": "Preparing instruments...",
+    }
+    return messages.get(context, "Processing...")
