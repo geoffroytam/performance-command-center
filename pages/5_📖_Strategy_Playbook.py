@@ -2,10 +2,12 @@
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
 
 from utils.data_loader import load_all_data
-from utils.constants import COLORS, load_settings
+from utils.recommendations import generate_playbook_recommendations, analyze_platform_health, INDUSTRY_BENCHMARKS
+from utils.constants import COLORS, ROAS_TARGETS, load_settings
 from utils.theme import inject_objectif_lune_css, render_header
 
 st.set_page_config(page_title="Strategy Playbook", page_icon="🚀", layout="wide")
@@ -15,7 +17,113 @@ render_header("Strategy Playbook", "Scenario-based strategies and platform-speci
 
 settings = load_settings()
 
+# ── Load Data ─────────────────────────────────────────────────
+if "data" not in st.session_state or st.session_state.data.empty:
+    df = load_all_data()
+    if df.empty:
+        df = pd.DataFrame()
+    else:
+        st.session_state.data = df
+else:
+    df = st.session_state.data
+
+# ═══════════════════════════════════════════════════════════════
+# DATA-DRIVEN RECOMMENDATIONS
+# ═══════════════════════════════════════════════════════════════
+st.subheader("Data-Driven Recommendations")
+st.caption("Recommendations generated from your actual performance data and industry benchmarks")
+
+if not df.empty:
+    playbook_recs = generate_playbook_recommendations(df, lookback_days=30)
+
+    if playbook_recs:
+        priority_colors = {
+            "P1": COLORS["red"],
+            "P2": COLORS["orange"],
+            "P3": COLORS["blue"],
+        }
+        priority_labels = {
+            "P1": "High Priority",
+            "P2": "Medium Priority",
+            "P3": "Opportunity",
+        }
+
+        for rec in playbook_recs:
+            p_color = priority_colors.get(rec["priority"], COLORS["gray"])
+            p_label = priority_labels.get(rec["priority"], rec["priority"])
+            st.html(
+                f'<div style="background:{COLORS["light_gray"]}; padding:14px 16px; border-radius:8px; '
+                f'margin-bottom:10px; border-left:4px solid {p_color};">'
+                f'<div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">'
+                f'<span style="background:{p_color}; color:white; padding:2px 8px; border-radius:4px; '
+                f'font-size:0.7rem; font-weight:700;">{p_label}</span>'
+                f'<span style="font-size:0.75rem; color:{COLORS["gray"]};">{rec["category"]}</span>'
+                f'</div>'
+                f'<div style="font-weight:700; font-size:0.95rem; color:#2D3E50; margin-bottom:4px;">'
+                f'{rec["title"]}</div>'
+                f'<div style="font-size:0.85rem; color:#403833; margin-bottom:6px;">{rec["detail"]}</div>'
+                f'<div style="font-size:0.85rem; color:{p_color}; font-weight:600;">'
+                f'Action: {rec["action"]}</div>'
+                f'</div>'
+            )
+
+        st.caption(f"Based on the last 30 days of data. {len(playbook_recs)} recommendation(s) generated.")
+    else:
+        st.success("No critical recommendations. Performance is healthy across all segments.")
+
+    # ── Platform Health Scorecard ─────────────────────────────────
+    st.markdown("---")
+    st.subheader("Platform Health Scorecard")
+    st.caption("Current health assessment based on the last 30 days vs industry benchmarks")
+
+    health_rows = []
+    for platform in sorted(df["platform"].unique()):
+        for ctype in sorted(df[df["platform"] == platform]["campaign_type"].unique()):
+            health = analyze_platform_health(df, platform, ctype, lookback_days=30)
+            if health["health_score"] == 0:
+                continue
+
+            score = health["health_score"]
+            kpis = health["kpi_values"]
+            trends = health["kpi_trends"]
+            vs_bench = health["vs_benchmark"]
+
+            # Score emoji
+            if score >= 70:
+                score_emoji = "🟢"
+            elif score >= 45:
+                score_emoji = "🟡"
+            else:
+                score_emoji = "🔴"
+
+            # Trend arrows
+            _trend_arrows = {"rising": "↑", "falling": "↓", "stable": "→", "unknown": "—", "insufficient_data": "—"}
+
+            health_rows.append({
+                "Platform": platform,
+                "Type": ctype,
+                "Score": f"{score_emoji} {score}/100",
+                "ROAS": f"{kpis.get('roas', 0):.1f}" if not pd.isna(kpis.get("roas")) else "—",
+                "CPM Trend": _trend_arrows.get(trends.get("cpm", "unknown"), "—"),
+                "CTR Trend": _trend_arrows.get(trends.get("ctr", "unknown"), "—"),
+                "CVR Trend": _trend_arrows.get(trends.get("cvr", "unknown"), "—"),
+                "CPM vs Bench": vs_bench.get("cpm", "—"),
+                "CVR vs Bench": vs_bench.get("cvr", "—"),
+                "Issues": str(len(health["issues"])),
+            })
+
+    if health_rows:
+        st.dataframe(pd.DataFrame(health_rows), use_container_width=True, hide_index=True)
+        st.caption(
+            "Trends: ↑ rising, ↓ falling, → stable. "
+            "Benchmark status: excellent / normal / below_range / above_range."
+        )
+else:
+    st.info("Upload data to see data-driven recommendations. Use the scenario map below as a reference.")
+
+
 # ── Scenario-Based Strategy Map ───────────────────────────────
+st.markdown("---")
 st.subheader("Scenario-Based Strategy Map")
 st.caption("Select the business situation to see recommended campaign actions")
 

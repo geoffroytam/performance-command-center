@@ -24,6 +24,7 @@ from utils.forecasting import (
     compute_spend_envelope_warning,
 )
 from utils.pattern_engine import get_patterns_for_month
+from utils.recommendations import generate_forecast_recommendations, generate_allocation_recommendations
 from utils.constants import COLORS, ROAS_TARGETS, KPI_DRIVER_TYPE, load_settings
 from utils.theme import inject_objectif_lune_css, render_header
 
@@ -154,6 +155,21 @@ forecast_method = st.radio(
 )
 use_method_a = forecast_method in [method_options[0], method_options[2]]
 use_method_b = forecast_method in [method_options[1], method_options[2]]
+
+# Method feedback: explain what's active
+if steps_forward == 0:
+    st.caption(
+        f"**Active: {forecast_method}** — Since the target month matches the latest data, "
+        f"both methods use the same current baselines. Method differences become visible when "
+        f"forecasting 1+ months ahead."
+    )
+else:
+    _method_desc = {
+        method_options[0]: "Chaining historical month-over-month trends from your data.",
+        method_options[1]: "Applying seasonal indices to a 90-day trailing baseline.",
+        method_options[2]: "Running both methods and showing the midpoint + range.",
+    }
+    st.caption(f"**Active: {forecast_method}** — {_method_desc[forecast_method]}")
 
 # ═══════════════════════════════════════════════════════════════
 # PRE-COMPUTE: Historical MoM Trends + Seasonal Indices
@@ -646,6 +662,56 @@ if projection_rows:
         f'</div>'
     )
 
+    # ── Method Comparison Summary ─────────────────────────────────
+    # Show when methods produce different results
+    rows_with_both = [r for r in projection_rows if r.get("_method_a_proj") and r.get("_method_b_proj")]
+    if rows_with_both and steps_forward > 0:
+        with st.expander(
+            f"📊 Method Comparison — {len(rows_with_both)} segment(s) with A vs B projections",
+            expanded=True,
+        ):
+            comp_rows = []
+            for r in rows_with_both:
+                a_roas = r["_method_a_proj"]["roas"]
+                b_roas = r["_method_b_proj"]["roas"]
+                a_rev = r["_method_a_proj"]["revenue"]
+                b_rev = r["_method_b_proj"]["revenue"]
+                spread_roas = abs(a_roas - b_roas)
+                spread_rev = abs(a_rev - b_rev)
+                comp_rows.append({
+                    "Platform": r["Platform"],
+                    "Type": r["Type"],
+                    "A ROAS": format_number(a_roas, 1),
+                    "B ROAS": format_number(b_roas, 1),
+                    "Spread": format_number(spread_roas, 1),
+                    "A Revenue": format_currency(a_rev),
+                    "B Revenue": format_currency(b_rev),
+                    "Rev. Spread": format_currency(spread_rev),
+                })
+            st.dataframe(pd.DataFrame(comp_rows), use_container_width=True, hide_index=True)
+
+            # Guidance based on selected method
+            if forecast_method == method_options[0]:
+                st.caption(
+                    "You're using **Method A** (MoM Trends). The table above shows how Method B "
+                    "would differ. Switch to 'Both' to use the midpoint."
+                )
+            elif forecast_method == method_options[1]:
+                st.caption(
+                    "You're using **Method B** (Seasonal Index). The table above shows how Method A "
+                    "would differ. Switch to 'Both' to use the midpoint."
+                )
+            else:
+                st.caption(
+                    "Using **Both Methods** — projections use the midpoint of A and B. "
+                    "Larger spreads indicate higher forecast uncertainty."
+                )
+    elif steps_forward == 0 and forecast_method != method_options[2]:
+        st.info(
+            f"**Method note:** Both Method A and B produce identical results for the current month "
+            f"because no forward projection is needed. Try selecting a future month to see method differences."
+        )
+
     # ── Risk Alerts ──────────────────────────────────────────────
     if risk_alerts:
         st.markdown("#### ⚠️ Risk Alerts")
@@ -1063,6 +1129,86 @@ if patterns:
             st.markdown(f"**Should Have Done:** {p.get('what_we_should_have_done', 'N/A')}")
 else:
     st.info("No pattern log entries found for this month. Build your pattern log in the Pattern Finder page.")
+
+
+# ═══════════════════════════════════════════════════════════════
+# STEP 8: DATA-DRIVEN RECOMMENDATIONS
+# ═══════════════════════════════════════════════════════════════
+st.markdown("---")
+st.subheader("Step 8: Recommendations")
+st.caption(
+    "Data-driven recommendations based on your historical performance, "
+    "industry benchmarks, and forecast analysis."
+)
+
+if projection_rows:
+    # Forecast-specific recommendations
+    forecast_recs = generate_forecast_recommendations(
+        projection_rows=projection_rows,
+        risk_alerts=risk_alerts,
+        trend_details=trend_details,
+        seasonal_details=seasonal_details,
+        steps_forward=steps_forward,
+        target_month_name=target_month.strftime("%B %Y"),
+    )
+
+    # Allocation recommendations from historical data
+    alloc_recs = generate_allocation_recommendations(
+        df=df,
+        current_allocations=platform_alloc,
+        forecast_spend=forecasted_total,
+        lookback_days=30,
+    )
+
+    all_recs = forecast_recs + alloc_recs
+    # Deduplicate by title
+    seen_titles = set()
+    unique_recs = []
+    for r in all_recs:
+        if r["title"] not in seen_titles:
+            seen_titles.add(r["title"])
+            unique_recs.append(r)
+
+    # Sort by priority
+    priority_order = {"P1": 0, "P2": 1, "P3": 2}
+    unique_recs.sort(key=lambda r: priority_order.get(r["priority"], 9))
+
+    if unique_recs:
+        priority_colors = {
+            "P1": COLORS["red"],
+            "P2": COLORS["orange"],
+            "P3": COLORS["blue"],
+        }
+        priority_labels = {
+            "P1": "High Priority",
+            "P2": "Medium Priority",
+            "P3": "Opportunity",
+        }
+
+        for rec in unique_recs:
+            p_color = priority_colors.get(rec["priority"], COLORS["gray"])
+            p_label = priority_labels.get(rec["priority"], rec["priority"])
+            st.html(
+                f'<div style="background:{COLORS["light_gray"]}; padding:14px 16px; border-radius:8px; '
+                f'margin-bottom:10px; border-left:4px solid {p_color};">'
+                f'<div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">'
+                f'<span style="background:{p_color}; color:white; padding:2px 8px; border-radius:4px; '
+                f'font-size:0.7rem; font-weight:700;">{p_label}</span>'
+                f'<span style="font-size:0.75rem; color:{COLORS["gray"]};">{rec["category"]}</span>'
+                f'</div>'
+                f'<div style="font-weight:700; font-size:0.95rem; color:#2D3E50; margin-bottom:4px;">'
+                f'{rec["title"]}</div>'
+                f'<div style="font-size:0.85rem; color:#403833; margin-bottom:6px;">{rec["detail"]}</div>'
+                f'<div style="font-size:0.85rem; color:{p_color}; font-weight:600;">'
+                f'Action: {rec["action"]}</div>'
+                f'</div>'
+            )
+
+        st.caption(f"Generated {len(unique_recs)} recommendation(s) from your data.")
+    else:
+        st.success("No critical recommendations. Your forecast looks balanced.")
+else:
+    st.info("Run the forecast above to generate recommendations.")
 
 
 # ═══════════════════════════════════════════════════════════════
