@@ -143,11 +143,13 @@ method_options = [
     "Both (Show Range)",
 ]
 forecast_method = st.radio(
-    "Forecast Method",
+    "KPI Projection Method",
     method_options,
     index=default_method_idx,
     horizontal=True,
     help=(
+        "Controls how CPM, CTR, CVR, and AOV are projected for the target month. "
+        "This does NOT affect Spend (set in Step 1 above). "
         "**Method A** chains month-over-month trend changes — best for 1-2 months ahead. "
         "**Method B** uses seasonal indices with a 90-day trailing baseline — best for 3+ months. "
         "**Both** runs both and shows the range."
@@ -156,20 +158,35 @@ forecast_method = st.radio(
 use_method_a = forecast_method in [method_options[0], method_options[2]]
 use_method_b = forecast_method in [method_options[1], method_options[2]]
 
+# Scope callout: what this control does and does NOT affect
+st.html(
+    '<div style="background:#F0EDE6; padding:10px 14px; border-radius:6px; '
+    'border-left:3px solid #4A6FA5; margin:6px 0 4px 0; font-size:0.82rem; '
+    'font-family:DM Sans, sans-serif; color:#2D3E50;">'
+    '<b>What does this control?</b> The projection method determines how '
+    '<b>KPI baselines</b> (CPM, CTR, CVR, AOV) are projected forward, '
+    'which in turn drive Revenue and ROAS. '
+    '<b>Spend is not affected</b> — it comes from your inputs in Step 1 above.'
+    '</div>'
+)
+
 # Method feedback: explain what's active
 if steps_forward == 0:
     st.caption(
         f"**Active: {forecast_method}** — Since the target month matches the latest data, "
         f"both methods use the same current baselines. Method differences become visible when "
-        f"forecasting 1+ months ahead."
+        f"forecasting 1+ months ahead. Spend is always set by you in Step 1."
     )
 else:
     _method_desc = {
-        method_options[0]: "Chaining historical month-over-month trends from your data.",
-        method_options[1]: "Applying seasonal indices to a 90-day trailing baseline.",
-        method_options[2]: "Running both methods and showing the midpoint + range.",
+        method_options[0]: "Chaining historical MoM trends to project CPM, CTR, CVR, AOV.",
+        method_options[1]: "Applying seasonal indices to project CPM, CTR, CVR, AOV.",
+        method_options[2]: "Running both methods and showing the midpoint + range for CPM, CTR, CVR, AOV.",
     }
-    st.caption(f"**Active: {forecast_method}** — {_method_desc[forecast_method]}")
+    st.caption(
+        f"**Active: {forecast_method}** — {_method_desc[forecast_method]} "
+        f"Spend is always set by you in Step 1."
+    )
 
 # ═══════════════════════════════════════════════════════════════
 # PRE-COMPUTE: Historical MoM Trends + Seasonal Indices
@@ -440,13 +457,17 @@ method_label = {
 
 if steps_forward > 0:
     st.caption(
-        f"Projecting from {max_data_date.strftime('%B %Y')} → "
-        f"{target_month.strftime('%B %Y')} using **{method_label}**."
+        f"Projecting KPIs from {max_data_date.strftime('%B %Y')} → "
+        f"{target_month.strftime('%B %Y')} using **{method_label}**. "
+        f"Spend comes from your Step 1 inputs and is method-independent."
     )
 else:
     cpm_days = settings.get("cpm_baseline_days", 14)
     aov_days = settings.get("aov_baseline_days", 60)
-    st.caption(f"Using current baselines: {aov_days}-day AOV, {cpm_days}-day CTR/CVR/CPM")
+    st.caption(
+        f"Using current baselines: {aov_days}-day AOV, {cpm_days}-day CTR/CVR/CPM. "
+        f"Spend comes from your Step 1 inputs."
+    )
 
 projection_rows = []
 missing_baselines = []
@@ -640,6 +661,19 @@ if missing_baselines:
         st.warning(f"Missing baseline: {msg} — skipped from projection.")
 
 if projection_rows:
+    # Column legend: distinguish user inputs from method-projected values
+    st.html(
+        '<div style="display:flex; gap:16px; margin-bottom:6px; font-size:0.78rem; '
+        'font-family:DM Sans, sans-serif; color:#7A7A72;">'
+        '<span><span style="display:inline-block; width:12px; height:12px; '
+        'background:#4A6FA5; border-radius:2px; margin-right:4px; vertical-align:middle;"></span>'
+        '<b style="color:#2D3E50;">Your Inputs</b> (Spend)</span>'
+        '<span><span style="display:inline-block; width:12px; height:12px; '
+        'background:#C78B52; border-radius:2px; margin-right:4px; vertical-align:middle;"></span>'
+        '<b style="color:#2D3E50;">Method-Projected</b> (CPM, CTR, CVR, AOV \u2192 Revenue, ROAS)</span>'
+        '</div>'
+    )
+
     display_cols = [c for c in projection_rows[0].keys() if not c.startswith("_")]
     st.dataframe(
         pd.DataFrame(projection_rows)[display_cols],
@@ -904,15 +938,26 @@ if projection_rows:
     # ── Calculation breakdown (collapsible) ────────────────────────
     with st.expander("How These Numbers Are Calculated"):
         st.markdown(
-f"""**Bottom-up funnel model:**
+f"""**Key concept:** Spend is an **input you control** (set in Steps 1-3). \
+The KPI Projection Method only projects **KPI baselines** (CPM, CTR, CVR, AOV), \
+which then determine Revenue and ROAS through the funnel formula below.
+
+**Bottom-up funnel model:**
 
 ```
-Spend / CPM x 1,000 = Impressions
-Impressions x CTR (LPV) = Landing Page Views
-LPV x CVR (LPV) = Orders
-Orders x AOV = Revenue
-Revenue / Spend = ROAS
+Spend (YOUR INPUT)  ÷  CPM × 1,000  =  Impressions
+Impressions  ×  CTR (LPV)  =  Landing Page Views
+LPV  ×  CVR (LPV)  =  Orders
+Orders  ×  AOV  =  Revenue
+Revenue  ÷  Spend  =  ROAS
 ```
+
+**What changes when you switch KPI Projection Method:**
+- ✅ **CPM, CTR, CVR, AOV** — projected differently by Method A vs B
+- ✅ **Impressions, Clicks, Orders, Revenue, ROAS** — change as a consequence
+
+**What does NOT change:**
+- 🔒 **Spend** — always comes from your Step 1 total cost envelope and Step 2/3 allocation
 
 **Baseline sources:**
 - **Current month or past month:** Uses rolling averages from actual data (CPM/CTR/CVR: {settings.get('cpm_baseline_days', 14)}-day, AOV: {settings.get('aov_baseline_days', 60)}-day).
