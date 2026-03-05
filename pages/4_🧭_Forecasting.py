@@ -174,11 +174,13 @@ avg_trends = compute_mom_trends(monthly_kpis, year_weights=year_weights, exclude
 st.markdown("---")
 st.subheader("Step 1: Total Cost Envelope")
 
-# Try M-1 of target month first (the month immediately before the forecast target).
-# If no data exists for that month, fall back to the latest available month in data.
+# Determine baseline spend for the total cost envelope.
+# Priority: (1) actual M-1 of target, (2) projected M-1 via MoM trends,
+# (3) latest actual month as fallback.
 last_month = {"total_spend": 0, "platforms": {}, "platform_pcts": {}, "pr_split": {}, "empty": True}
+baseline_is_projected = False
 
-# Attempt 1: M-1 of target month
+# Attempt 1: M-1 of target month (actual data)
 try:
     target_m1_actuals = get_last_month_actuals(df, month_start)
     if target_m1_actuals.get("total_spend", 0) > 0:
@@ -186,14 +188,66 @@ try:
 except Exception:
     pass
 
-# Attempt 2: M-1 of latest data date
+# Attempt 2: If forecasting ahead and M-1 has no data, PROJECT M-1 using MoM trends
+if (last_month.get("empty", False) or last_month["total_spend"] == 0) and steps_forward > 0:
+    try:
+        # Get the latest actual month's total spend as anchor
+        anchor_ref = max_data_date.replace(day=1) + timedelta(days=32)
+        anchor_ref = anchor_ref.replace(day=1)
+        anchor_actuals = get_last_month_actuals(df, anchor_ref)
+        if anchor_actuals.get("total_spend", 0) > 0:
+            anchor_spend = anchor_actuals["total_spend"]
+            anchor_month_num = last_complete_month_num
+
+            # Compute aggregate spend MoM % changes from historical data
+            spend_by_month = monthly_kpis.groupby(["year", "month"])["spend"].sum().reset_index()
+            spend_by_month = spend_by_month.sort_values(["year", "month"])
+            spend_mom = {}
+            for _, row in spend_by_month.iterrows():
+                yr, mo, sp = int(row["year"]), int(row["month"]), row["spend"]
+                nxt_mo = mo + 1 if mo < 12 else 1
+                nxt_yr = yr if mo < 12 else yr + 1
+                nxt = spend_by_month[
+                    (spend_by_month["year"] == nxt_yr) & (spend_by_month["month"] == nxt_mo)
+                ]
+                if not nxt.empty and sp > 0:
+                    pct = (nxt.iloc[0]["spend"] - sp) / sp * 100
+                    spend_mom.setdefault((mo, nxt_mo), []).append(pct)
+
+            # Walk forward from anchor month to M-1 of target
+            target_m1_num = target_month_num - 1 if target_month_num > 1 else 12
+            projected_spend = anchor_spend
+            m = anchor_month_num
+            safety = 0
+            while m != target_m1_num and safety < 13:
+                nxt_m = m + 1 if m < 12 else 1
+                key = (m, nxt_m)
+                if key in spend_mom:
+                    projected_spend *= (1 + np.mean(spend_mom[key]) / 100)
+                m = nxt_m
+                safety += 1
+
+            target_m1_label = (month_start - timedelta(days=1)).strftime("%b %Y")
+            last_month = {
+                "total_spend": projected_spend,
+                "platforms": anchor_actuals.get("platforms", {}),
+                "platform_pcts": anchor_actuals.get("platform_pcts", {}),
+                "pr_split": anchor_actuals.get("pr_split", {}),
+                "empty": False,
+                "month_name": target_m1_label,
+            }
+            baseline_is_projected = True
+    except Exception:
+        pass
+
+# Attempt 3: M-1 of latest data date (fallback to actual)
 if last_month.get("empty", False) or last_month["total_spend"] == 0:
     try:
         last_month = get_last_month_actuals(df, ref_date)
     except Exception:
         pass
 
-# Attempt 3: use the month containing the latest data itself
+# Attempt 4: use the month containing the latest data itself
 if last_month.get("empty", False) or last_month["total_spend"] == 0:
     fallback_ref = max_data_date.replace(day=1) + timedelta(days=32)
     fallback_ref = fallback_ref.replace(day=1)
@@ -206,7 +260,7 @@ if last_month.get("empty", False) or last_month["total_spend"] == 0:
 baseline_label = last_month.get("month_name", "N/A")
 if baseline_label == "N/A" and last_month.get("period"):
     try:
-        baseline_label = pd.Timestamp(last_month["period"].split(" to ")[0]).strftime("%B %Y")
+        baseline_label = pd.Timestamp(last_month["period"].split(" to ")[0]).strftime("%b %Y")
     except Exception:
         baseline_label = "N/A"
 
@@ -218,10 +272,13 @@ except Exception:
 col1, col2, col3, col4 = st.columns([1.3, 1, 1, 1.3])
 
 with col1:
+    _base_type = "Projected" if baseline_is_projected else "Actual"
     st.metric(
         f"Baseline Spend ({baseline_label})",
         format_currency(last_month["total_spend"]),
-        help=f"Actual spend from {baseline_label}, the most recent complete month with data.",
+        help=f"{_base_type} spend for {baseline_label}. "
+        + ("Projected from historical MoM trends." if baseline_is_projected
+           else "Actual data from the most recent complete month."),
     )
 with col2:
     yoy_pct = st.number_input(
