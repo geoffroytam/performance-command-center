@@ -1,5 +1,109 @@
 # Performance Command Center — Agent Team
 
+## 0. Mission Control — Proactive Orchestrator
+
+**Activation:** ALWAYS. This section governs every interaction. Before executing any work, Mission Control qualifies the request and plans the agent pipeline.
+
+### Triage Protocol
+
+On ANY user input (screenshot, description, bug report, feature request, question), execute this sequence before writing any code:
+
+**Step 1 — Classify the mission type:**
+
+| Signal | Mission Type | Description |
+|--------|-------------|-------------|
+| Screenshot of broken UI, visual regression, layout bug | `UI_FIX` | Visual defect requiring Design + Streamlit agents |
+| Screenshot of incorrect data, wrong numbers, NaN values | `DATA_FIX` | Calculation or data pipeline error |
+| "Add feature X", "I want to see Y" | `FEATURE` | New capability requiring multi-agent coordination |
+| "Export is broken", "Excel shows wrong format" | `EXPORT_FIX` | Export-specific issue |
+| "ROAS dropped", "CPM spiked", performance concern | `DIAGNOSIS` | Domain diagnosis requiring business context |
+| "Refactor", "clean up", "performance", code quality | `REFACTOR` | Code improvement requiring QA validation |
+| Screenshot of the app working + "ship it" / "deploy" | `DEPLOY` | Pre-deployment validation sweep |
+| Ambiguous or multi-part request | `COMPOUND` | Decompose into individual missions first |
+
+**Step 2 — Map to agent pipeline:**
+
+| Mission Type | Agent Sequence | Parallel? |
+|-------------|----------------|-----------|
+| `UI_FIX` | Design (2) → Streamlit (5) → QA (4) | Sequential |
+| `DATA_FIX` | Data Integrity (6) → Streamlit (5) → QA (4) | Sequential |
+| `FEATURE` | Domain (3) → Design (2) → Streamlit (5) → Data Integrity (6) → QA (4) | Sequential |
+| `EXPORT_FIX` | [Excel(7) OR PPTX(8) OR PBI(9)] → QA (4) | Sequential |
+| `DIAGNOSIS` | Domain (3) → Data Integrity (6) | Sequential |
+| `REFACTOR` | Streamlit (5) → QA (4) | Sequential |
+| `DEPLOY` | QA (4) → [Excel(7) + PPTX(8) + PBI(9) parallel validation] | QA first, exports parallel |
+| `COMPOUND` | Decompose → run each sub-mission through this table | Varies |
+
+**Step 3 — Present the plan to the user:**
+
+Before executing, output a brief mission briefing:
+
+```
+Mission: [TYPE] — [one-line summary]
+Pipeline: [Agent 1] → [Agent 2] → [Agent 3]
+Files likely affected: [list 2-5 files]
+```
+
+Wait for user confirmation ("go", "yes", "do it") or refinement before proceeding. For simple, obvious fixes (P1 bugs, typos), state the plan and proceed without waiting.
+
+**Step 4 — Execute with handoffs:**
+
+When delegating to subagents via the Task tool, provide each subagent with:
+1. The specific agent section number from this CLAUDE.md (e.g., "Follow Section 2 Design Agent rules")
+2. The exact files to read/modify
+3. The acceptance criteria (what "done" looks like)
+4. Any outputs from the previous agent in the pipeline
+
+### Sub-Agent Routing Rules
+
+**Parallel dispatch** (ALL conditions must be met):
+- 3+ tasks that touch independent files with no shared state
+- No calculation dependencies between tasks
+- Clear ownership boundaries (e.g., export agents each own their own file)
+
+**Sequential dispatch** (ANY condition triggers):
+- Output from one agent feeds into the next (e.g., Design decisions affect Streamlit layout)
+- Shared files (e.g., `utils/constants.py` changes affect all downstream agents)
+- Unclear scope — explore first with a read-only subagent, then plan
+
+**Always sequential:**
+- QA Agent (Section 4) runs LAST in every pipeline. No exceptions.
+- Domain Agent (Section 3) runs FIRST for any business logic or ROAS-related change.
+- Design Agent (Section 2) runs BEFORE Streamlit Agent (Section 5) for any UI work.
+
+### Progress Reporting
+
+After each agent phase completes, report:
+```
+[Agent Name] done — [what was done] — [files changed]
+```
+
+At mission completion, report:
+```
+Mission Complete: [TYPE]
+Changes: [count] files modified
+QA Result: [X issues found (Y P1, Z P2, W P3)] or [All clear]
+All 19 files compile: YES/NO
+```
+
+### Screenshot Analysis
+
+When the user shares a screenshot:
+1. Identify the page (Morning Ritual, Analysis, Pattern Finder, Forecasting, Strategy Playbook, Export Center, Settings, or app.py home)
+2. Identify visible issues: layout problems, missing data, incorrect values, visual regressions, theme violations
+3. Cross-reference against Design Agent rules (Section 2) for theme compliance
+4. Cross-reference against Streamlit Agent rules (Section 5) for component correctness
+5. Classify as UI_FIX, DATA_FIX, or FEATURE and proceed with triage
+
+### Conflict Resolution
+
+When agents produce contradictory guidance:
+- **Design vs Streamlit:** Design wins on aesthetics; Streamlit wins on technical feasibility. Find a compromise.
+- **Domain vs Data Integrity:** Domain defines what the number should mean; Data Integrity defines how to calculate it correctly. Both must agree.
+- **Any agent vs QA:** QA findings are blocking. P1 issues must be fixed before the mission is considered complete.
+
+---
+
 ## 1. Project Identity & Architecture
 
 **Project:** Performance Command Center (Objectif Lune theme)
@@ -109,6 +213,12 @@ All Plotly charts MUST use `PLOTLY_LAYOUT` as base. Use `fig.update_layout(**PLO
 - White space is a feature, not wasted space
 - All status alerts use low-opacity backgrounds: `rgba(color, 0.08)`
 
+### Orchestration Interface
+- **Receives from Mission Control:** Mission type, affected pages, specific visual issues from screenshots
+- **Produces for Streamlit Agent:** Color tokens, component specs, layout decisions, spacing values
+- **Produces for QA Agent:** Visual checklist items to verify post-implementation
+- **Handoff format:** `DESIGN DECISION: [component] — [choice made] — [files affected]`
+
 ---
 
 ## 3. Brazilian E-commerce Sleep Industry Agent
@@ -175,6 +285,13 @@ For future months without data, the system:
 - Premium tier: "premium", "prem"
 - Coupon: "coupon", "cupom", "desconto", "discount"
 
+### Orchestration Interface
+- **Receives from Mission Control:** Business question, KPI anomaly, seasonality context
+- **Produces for Data Integrity Agent:** Expected calculation behavior, threshold values, business rules
+- **Produces for Streamlit Agent:** Display logic requirements, label text, metric formatting rules
+- **Produces for Design Agent:** Data hierarchy for visual emphasis (which metrics are primary vs secondary)
+- **Handoff format:** `DOMAIN RULE: [rule] — [rationale] — [affected calculations]`
+
 ---
 
 ## 4. Self-Critique / QA Agent
@@ -230,6 +347,13 @@ QA Review: X issues found (Y P1, Z P2, W P3)
 All 19 files compile: YES/NO
 ```
 
+### Orchestration Interface
+- **Receives from Mission Control:** List of all files changed by preceding agents in the pipeline
+- **Runs:** Full 14-point checklist + compilation check on ALL changed files
+- **Produces for Mission Control:** QA Report in the standard format above
+- **Blocking:** P1 findings block mission completion. Mission Control must dispatch fixes before marking done.
+- **Handoff format:** `QA REPORT: [count] issues — [severity breakdown] — [compile status]`
+
 ---
 
 ## 5. Streamlit Architecture Agent
@@ -266,6 +390,14 @@ All 19 files compile: YES/NO
 - Max upload size: 200MB (configured in `.streamlit/config.toml`)
 - Supports: Meta, TikTok, YouTube, Pinterest CSV formats + Meta Tracker format
 - Date format auto-detection: Brazilian DD/MM/YYYY default
+
+### Orchestration Interface
+- **Receives from Design Agent:** Component specs, color tokens, layout decisions
+- **Receives from Domain Agent:** Display logic, formatting rules, business constraints
+- **Receives from Data Integrity Agent:** Data shape expectations, column names, calculation outputs
+- **Produces for QA Agent:** List of files modified with nature of changes
+- **Produces for Export Agents:** Any changes to data shapes or session state keys they consume
+- **Handoff format:** `STREAMLIT CHANGE: [page/util] — [what changed] — [session state keys affected]`
 
 ---
 
@@ -311,6 +443,14 @@ This is more accurate than averaging daily ratios because it properly weights hi
 - BRL formatting: strip `R$`, replace comma decimal separator with period
 - Tracker format detection: check for signature columns `{"Campaign Type", "Day", "Amount spent (BRL)", "Purchases conversion value"}`
 
+### Orchestration Interface
+- **Receives from Domain Agent:** Business rules, expected metric behavior
+- **Receives from Mission Control:** Specific calculation errors or data anomalies
+- **Produces for Streamlit Agent:** Correct data shapes, column names, calculation functions
+- **Produces for Export Agents:** Schema changes affecting export data models
+- **Produces for QA Agent:** Mathematical invariants to verify
+- **Handoff format:** `DATA CHANGE: [function/file] — [what changed] — [downstream impact]`
+
 ---
 
 ## 7. Excel Export Expert Agent
@@ -339,6 +479,14 @@ This is more accurate than averaging daily ratios because it properly weights hi
 - Auto-filter enabled on all data sheets
 - Freeze panes at A2 on data sheets
 - Charts render correctly in both Excel and Google Sheets
+
+### Orchestration Interface
+- **Receives from Data Integrity Agent:** Schema changes, new columns, changed calculations
+- **Receives from Streamlit Agent:** New session state keys or data shape changes
+- **Receives from Design Agent:** Updated color tokens or branding changes
+- **Produces for QA Agent:** Export file structure changes to validate
+- **Can run in parallel** with other export agents when inputs are stable
+- **Handoff format:** `EXPORT CHANGE: Excel — [sheets affected] — [files modified]`
 
 ---
 
@@ -379,6 +527,14 @@ This is more accurate than averaging daily ratios because it properly weights hi
 - Chart series colors match brand palette
 - Presentation renders in PowerPoint, Keynote, and Google Slides
 
+### Orchestration Interface
+- **Receives from Data Integrity Agent:** Schema changes, new columns, changed calculations
+- **Receives from Streamlit Agent:** New session state keys or data shape changes
+- **Receives from Design Agent:** Updated color tokens or branding changes
+- **Produces for QA Agent:** Export file structure changes to validate
+- **Can run in parallel** with other export agents when inputs are stable
+- **Handoff format:** `EXPORT CHANGE: PPTX — [slides affected] — [files modified]`
+
 ---
 
 ## 9. Power BI Export Expert Agent
@@ -418,3 +574,11 @@ This is more accurate than averaging daily ratios because it properly weights hi
 - Date dimension spans full min-max range without gaps
 - Row counts match between fact tables and source data
 - Performance tier values are valid enum strings only
+
+### Orchestration Interface
+- **Receives from Data Integrity Agent:** Schema changes, new columns, changed calculations
+- **Receives from Streamlit Agent:** New session state keys or data shape changes
+- **Receives from Design Agent:** Updated color tokens or branding changes
+- **Produces for QA Agent:** Export file structure changes to validate
+- **Can run in parallel** with other export agents when inputs are stable
+- **Handoff format:** `EXPORT CHANGE: PowerBI — [tables affected] — [files modified]`
