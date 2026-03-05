@@ -140,11 +140,21 @@ def main():
         df = st.session_state.data
         summary = get_data_summary(df)
 
+        def _fmt_compact(value: float) -> str:
+            """Format large currency values compactly: 30.2M, 248.1M, 1.2B."""
+            if abs(value) >= 1_000_000_000:
+                return f"R$ {value / 1_000_000_000:,.1f}B"
+            if abs(value) >= 1_000_000:
+                return f"R$ {value / 1_000_000:,.1f}M"
+            if abs(value) >= 1_000:
+                return f"R$ {value / 1_000:,.1f}K"
+            return f"R$ {value:,.2f}"
+
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("Total Spend", f"R$ {summary['total_spend']:,.2f}")
+            st.metric("Total Spend", _fmt_compact(summary['total_spend']))
         with col2:
-            st.metric("Total Revenue", f"R$ {summary['total_revenue']:,.2f}")
+            st.metric("Total Revenue", _fmt_compact(summary['total_revenue']))
         with col3:
             blended_roas = summary["total_revenue"] / summary["total_spend"] if summary["total_spend"] > 0 else 0
             st.metric("Blended ROAS", f"{blended_roas:.1f}")
@@ -169,6 +179,7 @@ def main():
             ).round(1)
             platform_summary["spend"] = platform_summary["spend"].apply(lambda x: f"R$ {x:,.0f}")
             platform_summary["revenue"] = platform_summary["revenue"].apply(lambda x: f"R$ {x:,.0f}")
+            platform_summary.columns = ["Platform", "Spend", "Revenue", "Rows", "ROAS"]
             st.dataframe(platform_summary, use_container_width=True, hide_index=True)
 
         with col_b:
@@ -183,6 +194,7 @@ def main():
             ).round(1)
             type_summary["spend"] = type_summary["spend"].apply(lambda x: f"R$ {x:,.0f}")
             type_summary["revenue"] = type_summary["revenue"].apply(lambda x: f"R$ {x:,.0f}")
+            type_summary.columns = ["Campaign Type", "Spend", "Revenue", "Rows", "ROAS"]
             st.dataframe(type_summary, use_container_width=True, hide_index=True)
 
         st.markdown("---")

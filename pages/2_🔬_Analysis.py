@@ -317,7 +317,7 @@ st.markdown("##### Funnel Decomposition")
 
 # Build the full decomposition table
 decomp_rows = [
-    ("**ROAS**", "roas", curr["roas"], comp["roas"], False, "Revenue / Spend"),
+    ("<b>ROAS</b>", "roas", curr["roas"], comp["roas"], False, "Revenue / Spend"),
     ("Spend", "spend", curr["spend"], comp["spend"], True, "Impressions x CPM / 1000"),
     ("Revenue", "revenue", curr["revenue"], comp["revenue"], False, "Orders x AOV"),
     ("CPM", "cpm", curr["cpm"], comp["cpm"], True, "Cost per 1,000 impressions"),
